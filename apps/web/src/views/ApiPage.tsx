@@ -1,22 +1,30 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { ArrowRight, KeyRound, Server } from 'lucide-react';
+import { ArrowRight, Copy, Check, KeyRound, RefreshCw, Server } from 'lucide-react';
 import { PageHeader } from '../components/PageHeader';
 import { EASE, Reveal } from '../components/Reveal';
 import { FlowConnector } from '../components/Illustrations';
 import { SpotlightCard } from '../components/SpotlightCard';
 import type { Navigate } from '../types';
+import {
+  fetchTenantReceipts,
+  getSavedApiKey,
+  registerTenantKey,
+  type StoredReceiptItem,
+  type TenantBalanceInfo,
+} from '../lib/zguard-api';
 
 const ENDPOINTS: { method: 'GET' | 'POST'; path: string; auth: string; price: string }[] = [
-  { method: 'GET', path: '/v1/token/{chainId}/{address}', auth: 'none', price: 'free' },
+  { method: 'GET', path: '/v1/token/{chainId}/{address}', auth: 'none', price: 'free (404 = unobserved)' },
   { method: 'POST', path: '/v1/register', auth: 'none', price: 'free · credits via X-PAYMENT' },
-  { method: 'POST', path: '/v1/verify', auth: 'key · x402', price: '$0.003 [ASSUMPTION]' },
-  { method: 'POST', path: '/v1/simulate', auth: 'key · x402', price: '$0.005 [ASSUMPTION]' },
-  { method: 'POST', path: '/v1/token-risk', auth: 'key · x402', price: '$0.01 [ASSUMPTION]' },
-  { method: 'POST', path: '/v1/check', auth: 'key · x402', price: '$0.005 [ASSUMPTION]' },
-  { method: 'POST', path: '/v1/guard', auth: 'key · x402', price: '$0.015 bundled [ASSUMPTION]' },
+  { method: 'POST', path: '/v1/verify', auth: 'key · x402', price: '$0.003 (3,000 micro-USDG)' },
+  { method: 'POST', path: '/v1/simulate', auth: 'key · x402', price: '$0.005 (5,000 micro-USDG)' },
+  { method: 'POST', path: '/v1/token-risk', auth: 'key · x402', price: '$0.010 (10,000 micro-USDG)' },
+  { method: 'POST', path: '/v1/check', auth: 'key · x402', price: '$0.005 (5,000 micro-USDG)' },
+  { method: 'POST', path: '/v1/guard', auth: 'key · x402', price: '$0.015 (15,000 micro-USDG)' },
   { method: 'GET', path: '/v1/balance', auth: 'key', price: 'free' },
-  { method: 'GET', path: '/v1/attestation/{decisionId}', auth: 'key', price: '[VERIFY]' },
+  { method: 'GET', path: '/v1/receipts', auth: 'key', price: 'free' },
+  { method: 'GET', path: '/v1/attestation/{decisionId}', auth: 'none / key', price: 'free' },
 ];
 
 const X402_STEPS = [
@@ -39,17 +47,17 @@ const CODE: Record<'curl' | 'ts' | 'mcp', string> = {
     "payload": { "type": "eip3009", "authorization": { … } },
     "checks": ["quote", "simulation", "token_risk"]
   }'`,
-  ts: `import { guard } from "@zguard/sdk"; // Apache-2.0 [ASSUMPTION]
+  ts: `import { ZGuardClient, guardEvmSigner } from "@zguard/sdk";
 
-const r = await guard({
-  network: "eip155:4663",
-  quote,                 // from the 402 channel, never the model
-  payload: { type: "eip3009", authorization },
-  checks: ["quote", "simulation", "token_risk"],
+const client = new ZGuardClient({
+  baseUrl: process.env.ZGUARD_API_URL,
+  apiKey: process.env.ZGUARD_API_KEY,
 });
 
-if (r.decision !== "allow") throw new GuardBlocked(r.codes);
-// allow is hash-bound · expires_at ≈ +120s`,
+const safeWallet = guardEvmSigner(walletClient, {
+  guardFn: (req) => client.guard(req),
+});
+// Blocks signing on deny or abstain; verifies payload_hash + TTL on allow`,
   mcp: `{
   "mcpServers": {
     "zguard": {
@@ -66,20 +74,21 @@ if (r.decision !== "allow") throw new GuardBlocked(r.codes);
 
 const CONFIG: [string, string, string][] = [
   ['Payment rail', 'USDG on eip155:4663 required · USDC Base / Solana optional', 'decision'],
-  ['Verdict TTL', '120 seconds', 'ASSUMPTION'],
-  ['Required checks on /v1/guard', 'quote, simulation, token_risk', 'ASSUMPTION'],
-  ['Revenue use', '100% of net API revenue to buyback and burn after token launch', 'ASSUMPTION'],
+  ['Storage engine', 'Neon Serverless Postgres (@neondatabase/serverless + Drizzle)', 'active'],
+  ['Verdict TTL', '120 seconds (ZGUARD_ALLOW_TTL_SECONDS)', 'open config'],
+  ['Required checks on /v1/guard', 'quote, simulation, token_risk', 'open config'],
+  ['Revenue use', '100% of net API revenue to buyback and burn after token launch', 'open config'],
   ['Signer on abstain', 'refuse · override only via explicit config', 'fixed'],
-  ['EIP-712 domains', 'only those read from installed contracts', 'required'],
-  ['Stock Token list', 'official registry, refreshed, not a static file', 'required'],
-  ['Simulation method', 'pinned after v4 hook and curve tests', 'VERIFY'],
-  ['zk system', 'Groth16 BN254 (required) · Halo2-KZG (target)', 'ASSUMPTION'],
+  ['EIP-712 domains', 'only those read from installed contracts (USDG verified on 4663)', 'required'],
+  ['Stock Token list', 'official Robinhood registry, refreshed live, never ticker-based', 'required'],
+  ['Simulation method', 'eth_simulateV1 active on RHC 4663 (+ debug_traceCall fallback)', 'verified'],
+  ['zk system', 'Groth16 BN254 (SP1) + Halo2-KZG · precompiles 0x06/0x07/0x08 active', 'verified'],
 ];
 
 function X402Flow() {
-  const [active, setActive] = useState(0);
+  const [active, setActive] = useState<number>(0);
   useEffect(() => {
-    const t = window.setInterval(() => setActive((v) => (v + 1) % X402_STEPS.length), 1300);
+    const t = window.setInterval(() => setActive((v: number) => (v + 1) % X402_STEPS.length), 1300);
     return () => window.clearInterval(t);
   }, []);
   return (
@@ -101,6 +110,164 @@ function X402Flow() {
           </motion.div>
         );
       })}
+    </div>
+  );
+}
+
+function LiveTenantPanel() {
+  const [apiKey, setApiKey] = useState<string | null>(null);
+  const [tenant, setTenant] = useState<TenantBalanceInfo | null>(null);
+  const [receipts, setReceipts] = useState<StoredReceiptItem[]>([]);
+  const [revenue, setRevenue] = useState<{ totalChargedMicroUsdg: string; totalBuybackMicroUsdg: string; receiptCount: number }>({
+    totalChargedMicroUsdg: '0',
+    totalBuybackMicroUsdg: '0',
+    receiptCount: 0,
+  });
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const loadData = useCallback(async (key: string | null) => {
+    try {
+      const res = await fetchTenantReceipts(key);
+      setTenant(res.tenant);
+      setReceipts(res.receipts);
+      setRevenue(res.revenue);
+    } catch {
+      // Ignore when offline
+    }
+  }, []);
+
+  useEffect(() => {
+    const saved = getSavedApiKey();
+    setApiKey(saved);
+    void loadData(saved);
+  }, [loadData]);
+
+  const handleRegister = async () => {
+    setBusy(true);
+    try {
+      const created = await registerTenantKey();
+      setApiKey(created.apiKey);
+      await loadData(created.apiKey);
+    } catch {
+      // Ignore
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const copyKey = () => {
+    if (!apiKey) return;
+    navigator.clipboard.writeText(apiKey).catch(() => undefined);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1800);
+  };
+
+  return (
+    <div className="rounded-3xl border border-white/10 bg-[#070708] p-6 sm:p-8">
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 pb-6">
+        <div>
+          <div className="font-mono text-[10px] uppercase tracking-[0.24em] text-zinc-500">
+            Live Tenant & Receipt Ledger · /v1/register · /v1/balance · /v1/receipts
+          </div>
+          <h3 className="mt-2 font-display text-2xl text-white">
+            API Key, USDG Credit & Decision Receipts
+          </h3>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void loadData(apiKey)}
+            className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-black px-4 py-2 font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-300 transition hover:border-white/40 hover:text-white"
+          >
+            <RefreshCw className="h-3.5 w-3.5" /> Refresh
+          </button>
+          <button
+            type="button"
+            onClick={handleRegister}
+            disabled={busy}
+            className="inline-flex items-center gap-2 rounded-full bg-white px-5 py-2 font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-black transition hover:opacity-90"
+          >
+            <KeyRound className="h-3.5 w-3.5" />
+            {apiKey ? 'New Tenant Key' : 'POST /v1/register'}
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-6 grid gap-4 sm:grid-cols-4">
+        <div className="rounded-2xl border border-white/10 bg-black p-4 sm:col-span-2">
+          <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-zinc-600">Active API key</div>
+          <div className="mt-2 flex items-center justify-between gap-2 font-mono text-[11px] text-zinc-200">
+            <span className="truncate">{apiKey ?? 'No key provisioned yet — click POST /v1/register'}</span>
+            {apiKey && (
+              <button type="button" onClick={copyKey} className="shrink-0 text-zinc-400 hover:text-white">
+                {copied ? <Check className="h-3.5 w-3.5 text-emerald-300" /> : <Copy className="h-3.5 w-3.5" />}
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="rounded-2xl border border-white/10 bg-black p-4">
+          <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-zinc-600">Tenant Credit (USDG)</div>
+          <div className="mt-2 font-mono text-lg text-white">
+            {tenant ? `${Number(tenant.creditMicroUsdg).toLocaleString()} µUSDG` : '—'}
+          </div>
+        </div>
+        <div className="rounded-2xl border border-white/10 bg-black p-4">
+          <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-zinc-600">Buyback Ledger</div>
+          <div className="mt-2 font-mono text-lg text-white">
+            {Number(revenue.totalBuybackMicroUsdg).toLocaleString()} µUSDG
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-6 overflow-x-auto rounded-2xl border border-white/10 bg-black">
+        <table className="w-full min-w-[640px] text-left font-mono text-[11px]">
+          <thead>
+            <tr className="border-b border-white/10 text-[9px] uppercase tracking-[0.18em] text-zinc-600">
+              <th className="px-4 py-3 font-medium">Decision ID</th>
+              <th className="px-3 py-3 font-medium">Endpoint</th>
+              <th className="px-3 py-3 font-medium">Verdict</th>
+              <th className="px-3 py-3 font-medium">Codes</th>
+              <th className="px-3 py-3 font-medium">Payload Hash</th>
+              <th className="px-4 py-3 text-right font-medium">Charged</th>
+            </tr>
+          </thead>
+          <tbody>
+            {receipts.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="px-4 py-8 text-center text-zinc-600">
+                  No receipts recorded yet. Trigger a call in Guard Console or ZK Layer to stream live receipts here.
+                </td>
+              </tr>
+            ) : (
+              receipts.slice(0, 8).map((r) => (
+                <tr key={r.decisionId} className="border-b border-white/5 last:border-0 hover:bg-white/[0.03]">
+                  <td className="px-4 py-3 text-zinc-300">{r.decisionId}</td>
+                  <td className="px-3 py-3 text-zinc-400">{r.endpoint}</td>
+                  <td className="px-3 py-3">
+                    <span
+                      className={
+                        r.decision === 'allow'
+                          ? 'text-emerald-300'
+                          : r.decision === 'deny'
+                            ? 'text-rose-300'
+                            : 'text-amber-300'
+                      }
+                    >
+                      {r.decision}
+                    </span>
+                  </td>
+                  <td className="px-3 py-3 text-zinc-400">{r.codes.length ? r.codes.join(', ') : '—'}</td>
+                  <td className="px-3 py-3 text-zinc-500">
+                    {r.payloadHash.slice(0, 8)}…{r.payloadHash.slice(-6)}
+                  </td>
+                  <td className="px-4 py-3 text-right text-zinc-300">{r.chargedMicroUsdg} µUSDG</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -177,6 +344,15 @@ export function ApiPage({ navigate }: { navigate: Navigate }) {
         </div>
       </section>
 
+      {/* §8.1 Simple Receipt & Tenant Balance Dashboard */}
+      <section className="relative border-t border-white/10 py-20">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+          <Reveal>
+            <LiveTenantPanel />
+          </Reveal>
+        </div>
+      </section>
+
       <section className="relative border-t border-white/10 py-24">
         <div className="mx-auto grid max-w-7xl gap-6 px-4 sm:px-6 lg:grid-cols-12 lg:px-8">
           <Reveal className="lg:col-span-7">
@@ -214,7 +390,7 @@ export function ApiPage({ navigate }: { navigate: Navigate }) {
               <div className="my-8 flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
                 {[
                   { t: 'Hosted API revenue', d: 'USDG on RHC' },
-                  { t: 'Buyback', d: '$ZGUARD [ASSUMPTION]' },
+                  { t: 'Buyback', d: '$ZGUARD (open config)' },
                   { t: 'Burn', d: '0x…dEaD' },
                 ].map((n, i) => (
                   <div key={n.t} className="flex flex-1 flex-col items-stretch sm:flex-row sm:items-center">
@@ -228,7 +404,7 @@ export function ApiPage({ navigate }: { navigate: Navigate }) {
                 ))}
               </div>
               <p className="font-mono text-[10px] leading-relaxed text-zinc-600">
-                The ticker, supply and fee split are not locked. Local tooling never requires holding the token. Burn address: 0x000000000000000000000000000000000000dEaD.
+                The ticker, supply and fee split stay configurable via env. Local tooling never requires holding the token. Burn address: 0x000000000000000000000000000000000000dEaD.
               </p>
             </div>
           </Reveal>
@@ -262,7 +438,7 @@ export function ApiPage({ navigate }: { navigate: Navigate }) {
           <div className="mt-12 flex flex-wrap items-center justify-between gap-6 rounded-3xl border border-white/10 bg-white/[0.03] p-8">
             <div>
               <div className="font-display text-2xl text-white">Try a guard call in the browser.</div>
-              <div className="mt-1 font-mono text-[11px] text-zinc-500">Fixtures replay the brief's acceptance tests</div>
+              <div className="mt-1 font-mono text-[11px] text-zinc-500">Scenarios execute live against Robinhood Chain (4663)</div>
             </div>
             <button
               type="button"

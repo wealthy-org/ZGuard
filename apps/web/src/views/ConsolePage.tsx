@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { PageHeader } from '../components/PageHeader';
 import { EASE } from '../components/Reveal';
+import { postLiveGuard } from '../lib/zguard-api';
 
 type Dec = 'allow' | 'deny' | 'abstain';
 
@@ -39,7 +40,23 @@ interface Scenario {
   hash: string;
   ms: number;
   checks: [CheckOut, CheckOut, CheckOut];
+  liveRequest: Record<string, unknown>;
 }
+
+const USDG_ADDR = '0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168';
+const PAYEE_A = '0x000000000000000000000000000000000000aaaa';
+const PAYEE_X = '0x000000000000000000000000000000000000bbbb';
+// Live funded USDG holder on RHC 4663 (Paxos / pool address) so eth_simulateV1 succeeds cleanly on mainnet!
+const LIVE_USDG_HOLDER = '0xdf5FfF9cb88B3cAb50572FAE73E2EB08599D25D4';
+const PONS_CURVE_SAMPLE = '0x05811bBAF648E5FE455d527342Cb4DD03Fa21214';
+const AAPL_STOCK_TOKEN = '0xaF3D76f1834A1d425780943C99Ea8A608f8a93f9';
+
+const USDG_DOMAIN = {
+  name: 'Global Dollar',
+  version: '1',
+  chainId: 4663,
+  verifyingContract: USDG_ADDR,
+};
 
 const SCENARIOS: Scenario[] = [
   {
@@ -52,10 +69,27 @@ const SCENARIOS: Scenario[] = [
     hash: '0x9be1…77c3',
     ms: 412,
     checks: [
-      { d: 'allow', codes: [], head: 'payTo, asset, amount and chainId match the quote', rows: [['payTo', 'payee_A (fixture)'], ['amount', '1,000,000 micro'], ['asset', 'USDG · 6dp'], ['chainId', '4663']] },
+      { d: 'allow', codes: [], head: 'payTo, asset, amount and chainId match the quote', rows: [['payTo', '0x0000…aAaA'], ['amount', '1,000,000 micro'], ['asset', 'USDG · 6dp'], ['chainId', '4663']] },
       { d: 'allow', codes: [], head: 'success · 2 balance changes · no approvals', rows: [['status', 'success'], ['Δ payer', '−1.00 USDG'], ['approvals', 'none']] },
-      { d: 'allow', codes: [], head: 'canonical USDG · mint not exposed', rows: [['kind', 'usdg'], ['mintable', 'false'], ['venue', 'n/a']] },
+      { d: 'allow', codes: [], head: 'canonical USDG · mint not exposed', rows: [['kind', 'usdg'], ['mintable', 'false'], ['venue', 'canonical']] },
     ],
+    liveRequest: {
+      network: 'eip155:4663',
+      quote: { asset: USDG_ADDR, payTo: PAYEE_A, amount: '0', chainId: 4663 },
+      payload: {
+        type: 'eip3009',
+        authorization: {
+          from: LIVE_USDG_HOLDER,
+          to: PAYEE_A,
+          value: '0',
+          validAfter: '0',
+          validBefore: '4102444800',
+          nonce: '0x0000000000000000000000000000000000000000000000000000000000000001',
+          domain: USDG_DOMAIN,
+        },
+      },
+      checks: ['quote', 'simulation', 'token_risk'],
+    },
   },
   {
     id: 'payto',
@@ -63,14 +97,31 @@ const SCENARIOS: Scenario[] = [
     tag: 'x402 · interception',
     d: 'deny',
     reason: 'payTo differs from quote (Q-001)',
-    codes: ['Q-001'],
+    codes: ['Q-001', 'S-DIFF'],
     hash: '0x1d04…ab28',
     ms: 388,
     checks: [
-      { d: 'deny', codes: ['Q-001'], head: 'recipient differs from the signed quote', rows: [['expected', 'payee_A (fixture)'], ['actual', 'payee_X (fixture) ✗']] },
-      { d: 'allow', codes: [], head: 'tx executes, but it is not the quoted tx', rows: [['status', 'success'], ['Δ payee', '+1.00 USDG']] },
+      { d: 'deny', codes: ['Q-001'], head: 'recipient differs from the signed quote', rows: [['expected', '0x0000…aAaA'], ['actual', '0x0000…bBbB ✗']] },
+      { d: 'deny', codes: ['S-DIFF'], head: 'quoted payee receives 0 USDG in simulation', rows: [['status', 'success'], ['Δ quoted payee', '0 ✗']] },
       { d: 'allow', codes: [], head: 'canonical USDG', rows: [['kind', 'usdg'], ['mintable', 'false']] },
     ],
+    liveRequest: {
+      network: 'eip155:4663',
+      quote: { asset: USDG_ADDR, payTo: PAYEE_A, amount: '1000000', chainId: 4663 },
+      payload: {
+        type: 'eip3009',
+        authorization: {
+          from: LIVE_USDG_HOLDER,
+          to: PAYEE_X,
+          value: '1000000',
+          validAfter: '0',
+          validBefore: '4102444800',
+          nonce: '0x0000000000000000000000000000000000000000000000000000000000000002',
+          domain: USDG_DOMAIN,
+        },
+      },
+      checks: ['quote', 'simulation', 'token_risk'],
+    },
   },
   {
     id: 'amount',
@@ -83,39 +134,81 @@ const SCENARIOS: Scenario[] = [
     ms: 395,
     checks: [
       { d: 'deny', codes: ['Q-002'], head: 'authorization is 250× the quoted amount', rows: [['expected', '1,000,000'], ['actual', '250,000,000 ✗']] },
-      { d: 'allow', codes: [], head: 'would spend 250 USDG', rows: [['status', 'success'], ['Δ payer', '−250.00 USDG']] },
+      { d: 'deny', codes: ['S-REVERT'], head: 'would attempt 250 USDG transfer on RHC', rows: [['status', 'revert / diff'], ['Δ payer', '−250.00 USDG']] },
       { d: 'allow', codes: [], head: 'canonical USDG', rows: [['kind', 'usdg'], ['mintable', 'false']] },
     ],
+    liveRequest: {
+      network: 'eip155:4663',
+      quote: { asset: USDG_ADDR, payTo: PAYEE_A, amount: '1000000', chainId: 4663 },
+      payload: {
+        type: 'eip3009',
+        authorization: {
+          from: LIVE_USDG_HOLDER,
+          to: PAYEE_A,
+          value: '250000000',
+          validAfter: '0',
+          validBefore: '4102444800',
+          nonce: '0x0000000000000000000000000000000000000000000000000000000000000003',
+          domain: USDG_DOMAIN,
+        },
+      },
+      checks: ['quote', 'simulation', 'token_risk'],
+    },
   },
   {
-    id: 'mint',
-    label: 'Curve token, mint still open',
-    tag: 'pons curve · token risk',
-    d: 'deny',
-    reason: 'mint authority open on kind=other (T-MINT)',
-    codes: ['T-MINT'],
+    id: 'pons',
+    label: 'Live pons V2 curve token scan',
+    tag: 'pons curve · RHC 4663 live',
+    d: 'allow',
+    reason: 'pons_curve verified via PonsFactoryV2 · LP locked on curve',
+    codes: [],
     hash: '0xc307…9e11',
-    ms: 624,
+    ms: 510,
     checks: [
-      { d: 'allow', codes: [], head: 'intent matches router calldata', rows: [['chain', '4663'], ['function', 'swapExactIn'], ['value', '0']] },
-      { d: 'allow', codes: [], head: 'swap executes on pons curve · within slippage', rows: [['status', 'success'], ['hooks', 'pons meme hook']] },
-      { d: 'deny', codes: ['T-MINT'], head: 'mint authority is still open', rows: [['kind', 'other'], ['mintable', 'true ✗'], ['pons', 'not graduated']] },
+      { d: 'allow', codes: [], head: 'intent matches router calldata', rows: [['chain', '4663'], ['target', 'USDG'], ['value', '0']] },
+      { d: 'allow', codes: [], head: 'simulation succeeded on RHC 4663', rows: [['status', 'success'], ['approvals', 'none']] },
+      { d: 'allow', codes: [], head: 'pons V2 curve token · mintable=false', rows: [['kind', 'pons_curve'], ['mintable', 'false'], ['stack', 'pons v2']] },
     ],
+    liveRequest: {
+      network: 'eip155:4663',
+      token: PONS_CURVE_SAMPLE,
+      payload: {
+        type: 'intent',
+        intent: {
+          chainId: 4663,
+          to: USDG_ADDR,
+          function: 'transfer(address,uint256)',
+          args: [PAYEE_A, 0],
+          value: '0',
+          from: LIVE_USDG_HOLDER,
+        },
+      },
+      checks: ['quote', 'simulation', 'token_risk'],
+    },
   },
   {
     id: 'undecodable',
     label: 'Undecodable payload bytes',
     tag: 'malformed · abstain',
     d: 'abstain',
-    reason: 'payload not decodable (Q-DECODE) · downstream checks skipped',
-    codes: ['Q-DECODE'],
+    reason: 'payload not decodable · downstream checks fail-closed',
+    codes: ['Q-DECODE', 'S-FAIL', 'T-UNKNOWN'],
     hash: '0x0000…0000',
     ms: 171,
     checks: [
       { d: 'abstain', codes: ['Q-DECODE'], head: 'calldata failed to decode at offset 0x02', rows: [['decode', 'failed ✗'], ['policy', 'fail-closed']] },
-      { d: 'abstain', codes: ['S-FAIL'], head: 'not run · no intent to simulate', rows: [['status', 'not run'], ['reason', 'upstream abstain']] },
-      { d: 'abstain', codes: ['T-UNKNOWN'], head: 'token not derivable from payload', rows: [['kind', 'unknown'], ['policy', 'fail-closed']] },
+      { d: 'abstain', codes: ['S-FAIL'], head: 'not run · no intent to simulate', rows: [['status', 'unknown'], ['reason', 'upstream abstain']] },
+      { d: 'abstain', codes: ['T-UNKNOWN'], head: 'token not derivable from payload', rows: [['kind', 'other'], ['policy', 'fail-closed']] },
     ],
+    liveRequest: {
+      network: 'eip155:4663',
+      quote: { asset: USDG_ADDR, payTo: PAYEE_A, amount: '1000000', chainId: 4663 },
+      payload: {
+        type: 'evm_tx',
+        tx: '0xdeadbeef02',
+      },
+      checks: ['quote', 'simulation', 'token_risk'],
+    },
   },
   {
     id: 'approve',
@@ -127,17 +220,39 @@ const SCENARIOS: Scenario[] = [
     hash: '0x7aa9…c3d0',
     ms: 447,
     checks: [
-      { d: 'deny', codes: ['Q-006'], head: 'approve() is not present in the signed intent', rows: [['intent', 'swapExactIn only'], ['found', 'approve(spender, ∞) ✗']] },
-      { d: 'deny', codes: ['S-APPROVE'], head: 'unlimited allowance would be granted', rows: [['spender', '0xdead…beef (fixture)'], ['allowance', '∞ ✗']] },
-      { d: 'allow', codes: [], head: 'canonical USDG', rows: [['kind', 'usdg'], ['mintable', 'false']] },
+      { d: 'deny', codes: ['Q-006'], head: 'approve() is not present in the signed intent', rows: [['intent', 'transfer only'], ['found', 'approve(spender, ∞) ✗']] },
+      { d: 'deny', codes: ['S-APPROVE'], head: 'unlimited allowance would be granted', rows: [['spender', '0x0000…bBbB'], ['allowance', '∞ ✗']] },
+      { d: 'allow', codes: [], head: 'canonical Stock Token (AAPL)', rows: [['kind', 'stock_token'], ['mintable', 'false']] },
     ],
+    liveRequest: {
+      network: 'eip155:4663',
+      token: AAPL_STOCK_TOKEN,
+      payload: {
+        type: 'intent',
+        intent: {
+          chainId: 4663,
+          to: USDG_ADDR,
+          function: 'transfer(address,uint256)',
+          args: [PAYEE_A, 0],
+          value: '0',
+          from: LIVE_USDG_HOLDER,
+        },
+        tx: {
+          chainId: 4663,
+          from: LIVE_USDG_HOLDER,
+          to: USDG_ADDR,
+          value: '0',
+          // approve(0x000000000000000000000000000000000000bBbB, maxUint256)
+          data: '0x095ea7b3000000000000000000000000000000000000000000000000000000000000bbbbffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+        },
+      },
+      checks: ['quote', 'simulation', 'token_risk'],
+    },
   },
 ];
 
 const CHECK_NAMES = ['quote', 'simulation', 'token_risk'];
 const CHECK_ICONS: LucideIcon[] = [ScanLine, FlaskConical, Fingerprint];
-const STAGE_MS = [700, 1300, 1800];
-const DONE_MS = 2200;
 const NODES: { k: string; I: LucideIcon }[] = [
   { k: 'payload', I: Send },
   { k: 'quote', I: ScanLine },
@@ -155,21 +270,89 @@ const TONE: Record<Dec, string> = {
 const DEC_ICON: Record<Dec, LucideIcon> = { allow: ShieldCheck, deny: ShieldX, abstain: ShieldAlert };
 const ROW_ICON: Record<Dec, LucideIcon> = { allow: CheckCircle2, deny: XCircle, abstain: MinusCircle };
 
-function responseOf(s: Scenario) {
+function fallbackResponseOf(s: Scenario): Record<string, unknown> {
   return {
     decision: s.d,
     reason: s.reason,
     codes: s.codes,
     payload_hash: s.hash,
-    expires_at: s.d === 'allow' ? '+120s (hash-bound)' : null,
+    expires_at: s.d === 'allow' ? new Date(Date.now() + 120_000).toISOString() : null,
     network: 'eip155:4663',
     checks: {
       quote: { decision: s.checks[0].d, codes: s.checks[0].codes },
       simulation: { decision: s.checks[1].d, codes: s.checks[1].codes },
       token_risk: { decision: s.checks[2].d, codes: s.checks[2].codes },
     },
+    flags: [],
     charged: { asset: 'USDG', amount: '15000', unit: 'micro' },
   };
+}
+
+function mapLiveResponseToView(live: Record<string, unknown>, fallback: Scenario): {
+  d: Dec;
+  reason: string;
+  codes: string[];
+  hash: string;
+  ms: number;
+  checks: [CheckOut, CheckOut, CheckOut];
+} {
+  const d = (live.decision as Dec) || fallback.d;
+  const reason = String(live.reason || fallback.reason);
+  const codes = Array.isArray(live.codes) ? (live.codes as string[]) : fallback.codes;
+  const fullHash = String(live.payload_hash || fallback.hash);
+  const hash =
+    fullHash.length > 16 ? `${fullHash.slice(0, 6)}…${fullHash.slice(-4)}` : fullHash;
+  const meta = (live.receiptMeta as { latencyMs?: number } | undefined) ?? {};
+  const ms = typeof meta.latencyMs === 'number' ? meta.latencyMs : fallback.ms;
+
+  const checksObj = (live.checks as Record<string, Record<string, unknown>> | undefined) ?? {};
+  const q = checksObj.quote;
+  const sim = checksObj.simulation;
+  const tr = checksObj.token_risk;
+
+  const qOut: CheckOut = q
+    ? {
+        d: (q.decision as Dec) ?? fallback.checks[0].d,
+        codes: (q.codes as string[]) ?? [],
+        head:
+          q.decision === 'allow'
+            ? 'payTo, asset, amount and chainId match on RHC 4663'
+            : ((q.mismatches as string[] | undefined)?.[0] ?? fallback.checks[0].head),
+        rows: [
+          ['expected', String((q.expected as Record<string, unknown>)?.payTo ?? 'intent').slice(0, 14)],
+          ['amount', String((q.actual as Record<string, unknown>)?.amount ?? '0')],
+          ['domain', q.domainVerified ? 'verified onchain' : 'intent'],
+        ],
+      }
+    : fallback.checks[0];
+
+  const simOut: CheckOut = sim
+    ? {
+        d: (sim.decision as Dec) ?? fallback.checks[1].d,
+        codes: (sim.codes as string[]) ?? [],
+        head: `${String(sim.status ?? 'unknown')} via ${String(sim.method ?? 'eth_simulateV1')}`,
+        rows: [
+          ['status', String(sim.status ?? 'unknown')],
+          ['gasUsed', String(sim.gasUsed ?? 'n/a')],
+          ['approvals', `${Array.isArray(sim.approvals) ? sim.approvals.length : 0}`],
+        ],
+      }
+    : fallback.checks[1];
+
+  const trOut: CheckOut = tr
+    ? {
+        d: (tr.decision as Dec) ?? fallback.checks[2].d,
+        codes: (tr.codes as string[]) ?? [],
+        head: `${String(tr.symbol ?? tr.kind ?? 'token')} · kind=${String(tr.kind ?? 'other')}`,
+        rows: [
+          ['kind', String(tr.kind ?? 'other')],
+          ['mintable', String((tr.authorities as Record<string, unknown>)?.mintable ?? 'null')],
+          ['venue', String((tr.liquidity as Record<string, unknown>)?.venue ?? 'unknown')],
+        ],
+      }
+    : fallback.checks[2];
+
+  return { d, reason, codes, hash, ms, checks: [qOut, simOut, trOut] };
 }
 
 function JsonLine({ line }: { line: string }) {
@@ -197,9 +380,13 @@ function JsonLine({ line }: { line: string }) {
 
 export function ConsolePage() {
   const [sid, setSid] = useState('ok');
+  const [customToken, setCustomToken] = useState('');
   const [phase, setPhase] = useState<'idle' | 'running' | 'done'>('idle');
   const [stage, setStage] = useState(0);
   const [log, setLog] = useState<string[]>([]);
+  const [liveJson, setLiveJson] = useState<Record<string, unknown> | null>(null);
+  const [liveView, setLiveView] = useState<ReturnType<typeof mapLiveResponseToView> | null>(null);
+  const [apiMode, setApiMode] = useState<'live' | 'offline-fixture'>('live');
   const timers = useRef<number[]>([]);
   const sc = SCENARIOS.find((s) => s.id === sid) ?? SCENARIOS[0];
 
@@ -216,33 +403,77 @@ export function ConsolePage() {
     setPhase('idle');
     setStage(0);
     setLog([]);
+    setLiveJson(null);
+    setLiveView(null);
   };
 
-  const run = () => {
+  const run = async () => {
     if (phase === 'running') return;
     clear();
     setPhase('running');
-    setStage(0);
-    setLog([`POST /v1/guard  network=eip155:4663  fixture=${sc.id}`, '  payload decoded · quote sourced from 402 channel (not model)']);
-    sc.checks.forEach((c, i) => {
-      timers.current.push(
-        window.setTimeout(() => {
-          setStage(i + 1);
-          setLog((l) => [...l, `  ${CHECK_NAMES[i]} → ${c.d}${c.codes.length ? `  [${c.codes.join(', ')}]` : ''}`]);
-        }, STAGE_MS[i])
-      );
-    });
-    timers.current.push(
-      window.setTimeout(() => {
-        setPhase('done');
-        setLog((l) => [...l, `← 200 OK · ${sc.ms} ms · decision=${sc.d} · ${sc.d === 'allow' ? 'expires_at +120s' : 'signature blocked'}`]);
-      }, DONE_MS)
-    );
+    setStage(1);
+    setLiveJson(null);
+    setLiveView(null);
+
+    const requestBody =
+      customToken.trim().startsWith('0x') && customToken.trim().length === 42
+        ? { ...sc.liveRequest, token: customToken.trim() }
+        : sc.liveRequest;
+
+    setLog([
+      `POST /v1/guard  network=eip155:4663  scenario=${sc.id}`,
+      '  quote sourced from 402 channel · evaluating live RHC 4663 state…',
+    ]);
+
+    const t1 = window.setTimeout(() => setStage(2), 260);
+    const t2 = window.setTimeout(() => setStage(3), 520);
+    timers.current.push(t1, t2);
+
+    try {
+      const { status, data } = await postLiveGuard(requestBody);
+      clear();
+      setApiMode('live');
+      const mapped = mapLiveResponseToView(data, sc);
+      setLiveJson(data);
+      setLiveView(mapped);
+      setStage(3);
+      setPhase('done');
+      setLog((l) => [
+        ...l,
+        `  quote → ${mapped.checks[0].d}${mapped.checks[0].codes.length ? ` [${mapped.checks[0].codes.join(', ')}]` : ''}`,
+        `  simulation → ${mapped.checks[1].d}${mapped.checks[1].codes.length ? ` [${mapped.checks[1].codes.join(', ')}]` : ''}`,
+        `  token_risk → ${mapped.checks[2].d}${mapped.checks[2].codes.length ? ` [${mapped.checks[2].codes.join(', ')}]` : ''}`,
+        `← ${status} OK (live RHC 4663) · ${mapped.ms} ms · decision=${mapped.d}`,
+      ]);
+    } catch {
+      clear();
+      setApiMode('offline-fixture');
+      setLiveJson(fallbackResponseOf(sc));
+      setLiveView(null);
+      setStage(3);
+      setPhase('done');
+      setLog((l) => [
+        ...l,
+        ...sc.checks.map(
+          (c, i) => `  ${CHECK_NAMES[i]} → ${c.d}${c.codes.length ? ` [${c.codes.join(', ')}]` : ''}`
+        ),
+        `← offline fallback · ${sc.ms} ms · decision=${sc.d}`,
+      ]);
+    }
+  };
+
+  const activeView = liveView ?? {
+    d: sc.d,
+    reason: sc.reason,
+    codes: sc.codes,
+    hash: sc.hash,
+    ms: sc.ms,
+    checks: sc.checks,
   };
 
   const pos = phase === 'idle' ? 0 : phase === 'done' ? 4 : stage + 1;
-  const signerOk = phase === 'done' && sc.d === 'allow';
-  const DecIcon = DEC_ICON[sc.d];
+  const signerOk = phase === 'done' && activeView.d === 'allow';
+  const DecIcon = DEC_ICON[activeView.d];
 
   const checkStatus = (i: number): 'pending' | 'running' | 'done' =>
     phase === 'idle' ? 'pending' : stage > i || phase === 'done' ? 'done' : 'running';
@@ -252,7 +483,7 @@ export function ConsolePage() {
       <PageHeader
         kicker="Guard Console · POST /v1/guard"
         lines={['Trigger the guard.', { text: 'Watch it refuse.', muted: true }]}
-        desc="Replay the acceptance fixtures from the brief. Quote-match, simulation and token risk run in sequence, then the signer decides. Nothing here touches mainnet funds."
+        desc="Executes live quote-match, eth_simulateV1 simulation and token risk on Robinhood Chain (4663) via /v1/guard, then releases or blocks the signer."
       />
 
       <section className="relative pb-28">
@@ -261,8 +492,8 @@ export function ConsolePage() {
           <div className="flex flex-col gap-4 lg:col-span-4">
             <div className="rounded-3xl border border-white/10 bg-[#070708] p-4">
               <div className="mb-3 flex items-center justify-between px-2 font-mono text-[10px] uppercase tracking-[0.24em] text-zinc-500">
-                <span>Fixtures</span>
-                <span>{SCENARIOS.length} scenarios</span>
+                <span>Scenarios</span>
+                <span>{apiMode === 'live' ? 'live RHC 4663' : 'offline fallback'}</span>
               </div>
               <div className="flex flex-col gap-1.5">
                 {SCENARIOS.map((s) => {
@@ -289,6 +520,19 @@ export function ConsolePage() {
             </div>
 
             <div className="rounded-3xl border border-white/10 bg-[#070708] p-5">
+              <div className="mb-3">
+                <label className="mb-1.5 block font-mono text-[9px] uppercase tracking-[0.2em] text-zinc-500">
+                  Optional live token override (chain 4663)
+                </label>
+                <input
+                  value={customToken}
+                  onChange={(e) => setCustomToken(e.target.value)}
+                  placeholder="0x… (leave blank for scenario token)"
+                  spellCheck={false}
+                  className="w-full rounded-xl border border-white/10 bg-black px-3 py-2 font-mono text-[11px] text-zinc-200 outline-none focus:border-white/40"
+                />
+              </div>
+
               <div className="grid grid-cols-2 gap-2 font-mono text-[10px] uppercase tracking-[0.14em]">
                 {[
                   ['network', 'eip155:4663'],
@@ -387,7 +631,7 @@ export function ConsolePage() {
 
             {/* checks */}
             <div className="grid gap-3 sm:grid-cols-3">
-              {sc.checks.map((c, i) => {
+              {activeView.checks.map((c, i) => {
                 const st = checkStatus(i);
                 const Icon = CHECK_ICONS[i];
                 const RowIcon = ROW_ICON[c.d];
@@ -453,26 +697,26 @@ export function ConsolePage() {
               ) : (
                 <AnimatePresence>
                   <motion.div
-                    key={sc.id}
+                    key={sc.id + activeView.hash}
                     initial={{ opacity: 0, y: 14, filter: 'blur(6px)' }}
                     animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
                     transition={{ duration: 0.55, ease: EASE }}
                     className="flex flex-wrap items-center gap-5"
                   >
-                    <DecIcon className={`h-11 w-11 shrink-0 ${TONE[sc.d]}`} strokeWidth={1.4} />
+                    <DecIcon className={`h-11 w-11 shrink-0 ${TONE[activeView.d]}`} strokeWidth={1.4} />
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-baseline gap-x-4">
-                        <span className={`font-display text-4xl uppercase leading-none tracking-tight sm:text-5xl ${TONE[sc.d]}`}>{sc.d}</span>
+                        <span className={`font-display text-4xl uppercase leading-none tracking-tight sm:text-5xl ${TONE[activeView.d]}`}>{activeView.d}</span>
                         <span className="font-mono text-[10px] uppercase tracking-[0.24em] text-zinc-500">
-                          {sc.d === 'allow' ? 'signer: pass' : 'signer: block'}
+                          {activeView.d === 'allow' ? 'signer: pass' : 'signer: block'}
                         </span>
                       </div>
-                      <p className="mt-2 truncate font-mono text-[11px] text-zinc-400">{sc.reason}</p>
+                      <p className="mt-2 truncate font-mono text-[11px] text-zinc-400">{activeView.reason}</p>
                     </div>
                     <div className="hidden flex-col items-end gap-1 font-mono text-[9px] uppercase tracking-[0.16em] text-zinc-600 md:flex">
-                      <span>hash {sc.hash}</span>
+                      <span>hash {activeView.hash}</span>
                       <span>ttl 120s · bound</span>
-                      <span className={TONE[sc.d]}>{sc.codes.length ? sc.codes.join(' · ') : 'no reason codes'}</span>
+                      <span className={TONE[activeView.d]}>{activeView.codes.length ? activeView.codes.join(' · ') : 'no reason codes'}</span>
                     </div>
                   </motion.div>
                 </AnimatePresence>
@@ -483,15 +727,15 @@ export function ConsolePage() {
             <div className="flex-1 overflow-hidden rounded-3xl border border-white/10 bg-black">
               <div className="flex items-center justify-between border-b border-white/10 px-5 py-3 font-mono text-[10px] uppercase tracking-[0.22em] text-zinc-500">
                 <span>POST /v1/guard → response.json</span>
-                <span>schema v1</span>
+                <span>{apiMode === 'live' ? 'live schema v1' : 'fixture schema v1'}</span>
               </div>
               {phase === 'done' ? (
                 <motion.pre
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
-                  className="max-h-[320px] overflow-auto p-5 font-mono text-[11px] leading-[1.7]"
+                  className="max-h-[340px] overflow-auto p-5 font-mono text-[11px] leading-[1.7]"
                 >
-                  {JSON.stringify(responseOf(sc), null, 2)
+                  {JSON.stringify(liveJson ?? fallbackResponseOf(sc), null, 2)
                     .split('\n')
                     .map((ln, i) => (
                       <JsonLine key={i} line={ln} />

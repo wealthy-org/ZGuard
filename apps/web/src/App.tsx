@@ -1,3 +1,5 @@
+"use client";
+
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { CustomCursor } from './components/CustomCursor';
@@ -9,15 +11,15 @@ import { IntroSequence } from './components/IntroSequence';
 import { Navbar } from './components/Navbar';
 import { Footer } from './components/Footer';
 import { ZGuardLogo } from './components/ZGuardLogo';
-import { HomePage } from './pages/HomePage';
-import { ConsolePage } from './pages/ConsolePage';
-import { ChecksPage } from './pages/ChecksPage';
-import { ArchitecturePage } from './pages/ArchitecturePage';
-import { ZkPage } from './pages/ZkPage';
-import { RegistryPage } from './pages/RegistryPage';
-import { ApiPage } from './pages/ApiPage';
-import { DocsPage } from './pages/DocsPage';
-import { FaqPage } from './pages/FaqPage';
+import { HomePage } from './views/HomePage';
+import { ConsolePage } from './views/ConsolePage';
+import { ChecksPage } from './views/ChecksPage';
+import { ArchitecturePage } from './views/ArchitecturePage';
+import { ZkPage } from './views/ZkPage';
+import { RegistryPage } from './views/RegistryPage';
+import { ApiPage } from './views/ApiPage';
+import { DocsPage } from './views/DocsPage';
+import { FaqPage } from './views/FaqPage';
 import { ROUTES, routeFromHash, type Navigate, type RouteId } from './types';
 
 const EASE_IO = [0.76, 0, 0.24, 1] as const;
@@ -73,13 +75,20 @@ function Curtain({ covered, label }: { covered: boolean; label: string }) {
 
 export function App() {
   const [intro, setIntro] = useState(true);
-  const [route, setRoute] = useState<RouteId>(() => routeFromHash(window.location.hash));
-  const [incoming, setIncoming] = useState<RouteId>(route);
+  const [route, setRoute] = useState<RouteId>('home');
+  const [incoming, setIncoming] = useState<RouteId>('home');
   const [covered, setCovered] = useState(false);
-  const routeRef = useRef<RouteId>(route);
+  const routeRef = useRef<RouteId>('home');
   const busy = useRef(false);
 
   const finishIntro = useCallback(() => setIntro(false), []);
+
+  useEffect(() => {
+    const initial = routeFromHash(window.location.hash);
+    routeRef.current = initial;
+    setRoute(initial);
+    setIncoming(initial);
+  }, []);
 
   const navigate = useCallback<Navigate>((next) => {
     if (next === routeRef.current || busy.current) return;

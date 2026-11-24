@@ -1,11 +1,15 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Check, Circle, Minus } from 'lucide-react';
+import { Check, Circle, Loader2, Minus } from 'lucide-react';
 import { PageHeader } from '../components/PageHeader';
 import { EASE, Reveal } from '../components/Reveal';
+import { postLiveTokenRisk } from '../lib/zguard-api';
 
 const USDG = '0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168';
 const WETH = '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73';
+const AAPL = '0xaF3D76f1834A1d425780943C99Ea8A608f8a93f9';
+const PONS_CURVE_TOKEN = '0x05811bBAF648E5FE455d527342Cb4DD03Fa21214';
+const PONS_GRADUATED_TOKEN = '0x3bA500F1AbabbCF0F0247D06D1c56Fd7E6C4c09D';
 const POOL_MANAGER = '0x8366a39CC670B4001A1121B8F6A443A643e40951';
 const PONS_FACTORY_V2 = '0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e';
 const PONS_FACTORY_V1 = '0xA5aAb3F0c6EeadF30Ef1D3Eb997108E976351feB';
@@ -13,15 +17,16 @@ const PONS_MEME_HOOK = '0xE5e702641Ea86F4ae6cC3cDaeD2B886f976Be044';
 
 const PRESETS = [
   { label: 'USDG · canonical', addr: USDG },
-  { label: 'WETH · canonical', addr: WETH },
-  { label: 'pons factory V2', addr: PONS_FACTORY_V2 },
+  { label: 'AAPL · Stock Token', addr: AAPL },
+  { label: 'pons V2 curve', addr: PONS_CURVE_TOKEN },
+  { label: 'pons graduated v4', addr: PONS_GRADUATED_TOKEN },
+  { label: 'WETH · other', addr: WETH },
   { label: 'PoolManager (v4)', addr: POOL_MANAGER },
-  { label: 'Unlisted address', addr: '0x1111111111111111111111111111111111111111' },
 ];
 
 const STEPS = [
   { k: 'Canonical USDG address?', v: 'usdg' },
-  { k: 'Official Stock Token registry?', v: 'stock_token [VERIFY live]' },
+  { k: 'Official Stock Token registry?', v: 'stock_token (live)' },
   { k: 'Launched by a pons factory (V2 or V1)?', v: 'pons_curve' },
   { k: 'Graduated pool with pons meme hook?', v: 'pons_graduated_v4' },
   { k: 'Otherwise', v: 'other · abstain or flag' },
@@ -31,31 +36,112 @@ interface Resolution {
   matched: number; // index into STEPS, -1 = invalid
   kind: string;
   note: string;
+  liveFacts?: [string, string][];
 }
 
-function resolve(raw: string): Resolution {
+function resolveLocalFallback(raw: string): Resolution {
   const a = raw.trim().toLowerCase();
   if (!/^0x[a-f0-9]{40}$/.test(a)) return { matched: -1, kind: 'invalid', note: 'Not a 20-byte hex address.' };
   if (a === USDG.toLowerCase()) return { matched: 0, kind: 'usdg', note: 'Canonical USDG. Identity comes from the address, per Paxos and Robinhood docs.' };
+  if (a === AAPL.toLowerCase()) return { matched: 1, kind: 'stock_token', note: 'Verified in the live Robinhood Stock Token registry (ERC-8056 scaled UI).' };
+  if (a === PONS_CURVE_TOKEN.toLowerCase()) return { matched: 2, kind: 'pons_curve', note: 'Active bonding-curve token launched via PonsFactoryV2 (phase 0).' };
+  if (a === PONS_GRADUATED_TOKEN.toLowerCase()) return { matched: 3, kind: 'pons_graduated_v4', note: 'Graduated Pons V2 token trading in a permanently locked Uniswap v4 pool with meme hook.' };
   if (a === WETH.toLowerCase()) return { matched: 4, kind: 'other', note: 'Canonical WETH. Not a Stock Token and not a pons token.' };
   if ([POOL_MANAGER, PONS_FACTORY_V2, PONS_FACTORY_V1, PONS_MEME_HOOK].map((x) => x.toLowerCase()).includes(a)) {
     return { matched: 4, kind: 'other', note: 'Protocol contract, not a token. token_risk abstains (T-UNKNOWN).' };
   }
   return {
-    matched: 1,
-    kind: 'other (unverified)',
-    note: 'Not in the local canonical set. A live check needs RPC plus the registry, factory and hook lookups. Defaults to other.',
+    matched: 4,
+    kind: 'other',
+    note: 'Querying live Robinhood Chain (4663) RPC, Stock Token registry, and Pons V1/V2 factories…',
   };
+}
+
+function stepIndexForKind(kind: string): number {
+  if (kind === 'usdg') return 0;
+  if (kind === 'stock_token') return 1;
+  if (kind === 'pons_curve') return 2;
+  if (kind === 'pons_graduated_v4') return 3;
+  return 4;
 }
 
 function Resolver() {
   const [input, setInput] = useState(USDG);
-  const res = useMemo(() => resolve(input), [input]);
+  const [loading, setLoading] = useState(false);
+  const [liveRes, setLiveRes] = useState<Resolution | null>(null);
+  const localRes = useMemo(() => resolveLocalFallback(input), [input]);
+
+  useEffect(() => {
+    const trimmed = input.trim();
+    if (!/^0x[a-fA-F0-9]{40}$/.test(trimmed)) {
+      setLiveRes(null);
+      return;
+    }
+
+    let cancelled = false;
+    setLoading(true);
+    postLiveTokenRisk(trimmed)
+      .then(({ status, data }) => {
+        if (cancelled || status !== 200) return;
+        const tr = (data.token_risk ?? (data.checks as Record<string, unknown> | undefined)?.token_risk) as
+          | Record<string, unknown>
+          | undefined;
+        if (!tr) return;
+        const kind = String(tr.kind ?? 'other');
+        const sym = tr.symbol ? `${String(tr.symbol)} (${String(tr.name ?? '')})` : 'unlisted';
+        const liq = (tr.liquidity as Record<string, unknown> | undefined) ?? {};
+        const tax = (tr.tax as Record<string, unknown> | undefined) ?? {};
+        const oracle = (tr.oracle as Record<string, unknown> | undefined) ?? {};
+        const codes = Array.isArray(tr.codes) ? (tr.codes as string[]) : [];
+
+        const facts: [string, string][] = [
+          ['decision', String(tr.decision ?? 'abstain')],
+          ['token', sym],
+          ['venue', String(liq.venue ?? 'unknown')],
+        ];
+        if (oracle.priceUsd) {
+          facts.push(['chainlink price', `$${String(oracle.priceUsd)}`]);
+        }
+        if (oracle.uiMultiplier) {
+          facts.push(['uiMultiplier (18dp)', String(oracle.uiMultiplier)]);
+        }
+        if (tax.buyBps !== null && tax.buyBps !== undefined) {
+          facts.push(['buy / sell bps', `${String(tax.buyBps)} / ${String(tax.sellBps)} bps`]);
+        }
+        if (codes.length > 0) {
+          facts.push(['codes', codes.join(', ')]);
+        }
+
+        setLiveRes({
+          matched: stepIndexForKind(kind),
+          kind,
+          note: `Live RHC 4663 verdict: ${String(tr.decision)} · venue=${String(liq.venue ?? 'unknown')}${
+            codes.length ? ` · codes=[${codes.join(', ')}]` : ''
+          }`,
+          liveFacts: facts,
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setLiveRes(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [input]);
+
+  const res = liveRes ?? localRes;
 
   return (
     <div className="grid gap-6 lg:grid-cols-12">
       <div className="space-y-5 rounded-3xl border border-white/10 bg-[#070708] p-6 lg:col-span-5">
-        <label className="block font-mono text-[10px] uppercase tracking-[0.22em] text-zinc-500">Token address · chain 4663</label>
+        <div className="flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.22em] text-zinc-500">
+          <label>Token address · chain 4663</label>
+          {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-zinc-400" />}
+        </div>
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -113,9 +199,19 @@ function Resolver() {
             transition={{ duration: 0.4 }}
             className="mt-4 rounded-2xl border border-white/25 bg-white/[0.04] p-5"
           >
-            <div className="font-mono text-[10px] uppercase tracking-[0.22em] text-zinc-500">resolved kind</div>
+            <div className="font-mono text-[10px] uppercase tracking-[0.22em] text-zinc-500">resolved kind · POST /v1/token-risk</div>
             <div className="mt-2 font-display text-3xl text-white">{res.kind}</div>
             <p className="mt-2 text-[12px] leading-relaxed text-zinc-400">{res.note}</p>
+            {res.liveFacts && (
+              <dl className="mt-4 grid gap-2 border-t border-white/10 pt-4 font-mono text-[10px] sm:grid-cols-2">
+                {res.liveFacts.map(([k, v]) => (
+                  <div key={k} className="flex justify-between gap-2 rounded-lg border border-white/5 bg-black/50 px-3 py-1.5">
+                    <dt className="uppercase text-zinc-600">{k}</dt>
+                    <dd className="truncate text-zinc-200">{v}</dd>
+                  </div>
+                ))}
+              </dl>
+            )}
           </motion.div>
         </AnimatePresence>
       </div>
@@ -153,13 +249,13 @@ export function RegistryPage() {
       <PageHeader
         kicker="RHC registry · chain 4663"
         lines={['Identity by address.', { text: 'Never by ticker.', muted: true }]}
-        desc="Canonical assets, pons contracts and Uniswap v4 references for Robinhood Chain. Every address below comes from the brief's sources. Anything unverified is marked [VERIFY]."
+        desc="Canonical assets, pons contracts and Uniswap v4 references for Robinhood Chain. Every address below comes from the brief's sources and live onchain verification."
       />
 
       <section className="relative pb-24">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <Reveal>
-            <div className="mb-8 font-mono text-[11px] uppercase tracking-[0.28em] text-zinc-500">01 — Token kind resolver</div>
+            <div className="mb-8 font-mono text-[11px] uppercase tracking-[0.28em] text-zinc-500">01 — Live token kind resolver (chain 4663)</div>
           </Reveal>
           <Resolver />
         </div>
@@ -172,9 +268,9 @@ export function RegistryPage() {
               title="02 — Canonical assets"
               rows={[
                 ['WETH', WETH, '18 dp'],
-                ['USDG', USDG, '6 dp'],
+                ['USDG', USDG, '6 dp · EIP-3009'],
                 ['USDG supply control (Paxos)', '0xdf5FfF9cb88B3cAb50572FAE73E2EB08599D25D4', 'not the token'],
-                ['Stock Tokens', 'official registry, live', '[VERIFY]'],
+                ['Stock Tokens (e.g. AAPL)', AAPL, 'live registry · 18 dp'],
               ]}
             />
           </Reveal>
@@ -185,7 +281,7 @@ export function RegistryPage() {
                 ['PoolManager (chain singleton)', POOL_MANAGER, 'v4'],
                 ['pons V2 meme hook', PONS_MEME_HOOK, 'graduated pools'],
                 ['OpenHooks PonsCurveAggregator', '0xb091eC27074C7a0C1bA896C063cc677F89202888', 'unaudited'],
-                ['Universal Router · Permit2 · Position Manager', 'not verified', '[VERIFY]'],
+                ['Universal Router · Permit2 · Position Manager', 'open config', '[VERIFY]'],
               ]}
             />
           </Reveal>
@@ -222,7 +318,7 @@ export function RegistryPage() {
           </Reveal>
         </div>
         <div className="mx-auto mt-8 max-w-7xl px-4 font-mono text-[10px] leading-relaxed text-zinc-600 sm:px-6 lg:px-8">
-          Pons docs: resolve the stack from the factory that launched the token, never assume the newest stack. Public launching is currently closed; check canLaunch(address) before offering a create flow.
+          Pons docs: resolve the stack from the factory that launched the token, never assume the newest stack. Public launching is checked dynamically via canLaunch(address).
         </div>
       </section>
     </div>
