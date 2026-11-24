@@ -1,7 +1,9 @@
 import { serve } from "@hono/node-server";
+import { getRhcChainProfile } from "@zguard/sdk";
 import { createZGuardApp } from "./app.js";
 
 const { app, config, store } = createZGuardApp();
+const profile = getRhcChainProfile(config.activeChainId);
 
 serve(
   {
@@ -11,7 +13,7 @@ serve(
   },
   (info) => {
     console.log(
-      `[ZGuard API] listening on http://${info.address}:${info.port} (chain=4663, storage=${store.driver})`
+      `[ZGuard API] listening on http://${info.address}:${info.port} (chain=${config.activeChainId} [${profile.name}], storage=${store.driver})`
     );
   }
 );

@@ -2,9 +2,16 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  BASE_PUBLIC_RPC_MAINNET,
+  BASE_PUBLIC_RPC_SEPOLIA,
   DEAD_BURN_ADDRESS,
+  DEFAULT_ACTIVE_RHC_CHAIN_ID,
+  RHC_MAINNET_CHAIN_ID,
   RHC_PUBLIC_RPC_MAINNET,
   RHC_PUBLIC_RPC_TESTNET,
+  RHC_TESTNET_CHAIN_ID,
+  SOLANA_PUBLIC_RPC_DEVNET,
+  SOLANA_PUBLIC_RPC_MAINNET,
   type CheckMode,
   type CheckName,
   type ZkSystemId,
@@ -54,19 +61,41 @@ export interface ZGuardAppConfig {
   publicApiUrl: string;
   apiKeyPrefix: string;
 
+  /**
+   * Active default Robinhood Chain ID:
+   * - `46630` = Robinhood Chain Testnet (default for pre-production / senior demo without real fees)
+   * - `4663`  = Robinhood Chain Mainnet (flip ZGUARD_ACTIVE_CHAIN_ID=4663 when ready for production)
+   */
+  activeChainId: 46630 | 4663;
+
   databaseUrl: string;
   storageMode: "auto" | "neon";
 
   rhcRpcUrl: string;
   rhcFallbackRpcUrl: string;
+  rhcMainnetRpcUrl: string;
+  rhcMainnetFallbackRpcUrl: string;
   rhcTestnetRpcUrl: string;
+  rhcTestnetFallbackRpcUrl: string;
   simulationMethod: "auto" | "eth_simulateV1" | "debug_traceCall";
+
+  baseRpcUrl: string;
+  baseSepoliaRpcUrl: string;
+  solanaRpcUrl: string;
+  solanaDevnetRpcUrl: string;
 
   stockRegistryUrl: string;
   chainlinkFeedsUrl: string;
   registryRefreshSeconds: number;
 
+  sequencerUptimeFeedAddress: string | null;
+  sequencerGracePeriodSeconds: number;
+  sequencerMaxBlockAgeSeconds: number;
+
   x402PayTo: string;
+  x402SolanaPayTo: string | null;
+  x402RelayerPrivateKey: string | null;
+  x402SettlementMode: "auto" | "onchain" | "offchain";
   pricesMicroUsdg: {
     verify: bigint;
     simulate: bigint;
@@ -77,6 +106,10 @@ export interface ZGuardAppConfig {
   devFreeCreditMicroUsdg: bigint;
   enableUsdcBase: boolean;
   enableUsdcSolana: boolean;
+
+  enableUrlFetch: boolean;
+  urlFetchTimeoutMs: number;
+  urlFetchMaxBytes: number;
 
   tokenTicker: string;
   ponsTokenAddress: string | null;
@@ -98,6 +131,7 @@ export interface ZGuardAppConfig {
   zkHalo2Enabled: boolean;
   zkSp1ProverUrl: string | null;
   zkVerifierAddress: string | null;
+  zkVerifierPrivateKey: string | null;
   zkBatchSize: number;
 }
 
@@ -111,6 +145,26 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ZGuardAppConfi
   if (env === process.env) {
     loadWorkspaceEnvFiles();
   }
+
+  const parsedChain = Number(env.ZGUARD_ACTIVE_CHAIN_ID ?? DEFAULT_ACTIVE_RHC_CHAIN_ID);
+  const activeChainId: 46630 | 4663 =
+    parsedChain === RHC_MAINNET_CHAIN_ID ? RHC_MAINNET_CHAIN_ID : RHC_TESTNET_CHAIN_ID;
+
+  const rhcTestnetRpcUrl = env.ZGUARD_RHC_TESTNET_RPC_URL || RHC_PUBLIC_RPC_TESTNET;
+  const rhcTestnetFallbackRpcUrl =
+    env.ZGUARD_RHC_TESTNET_FALLBACK_RPC_URL || RHC_PUBLIC_RPC_TESTNET;
+  const rhcMainnetRpcUrl = env.ZGUARD_RHC_MAINNET_RPC_URL || RHC_PUBLIC_RPC_MAINNET;
+  const rhcMainnetFallbackRpcUrl =
+    env.ZGUARD_RHC_MAINNET_FALLBACK_RPC_URL || RHC_PUBLIC_RPC_MAINNET;
+
+  // `rhcRpcUrl` points to whichever chain is currently active, unless explicitly overridden by ZGUARD_RHC_RPC_URL
+  const defaultActiveRpc =
+    activeChainId === RHC_MAINNET_CHAIN_ID ? rhcMainnetRpcUrl : rhcTestnetRpcUrl;
+  const defaultActiveFallback =
+    activeChainId === RHC_MAINNET_CHAIN_ID
+      ? rhcMainnetFallbackRpcUrl
+      : rhcTestnetFallbackRpcUrl;
+
   const requiredList = (env.ZGUARD_REQUIRED_CHECKS ?? "quote,simulation,token_risk")
     .split(",")
     .map((s) => s.trim())
@@ -130,17 +184,27 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ZGuardAppConfi
     publicApiUrl: env.ZGUARD_PUBLIC_API_URL || "http://localhost:8787",
     apiKeyPrefix: env.ZGUARD_API_KEY_PREFIX || "zg_",
 
+    activeChainId,
+
     databaseUrl: env.DATABASE_URL || "",
     storageMode: env.ZGUARD_STORAGE_MODE === "neon" ? "neon" : "auto",
 
-    rhcRpcUrl: env.ZGUARD_RHC_RPC_URL || RHC_PUBLIC_RPC_MAINNET,
-    rhcFallbackRpcUrl: env.ZGUARD_RHC_FALLBACK_RPC_URL || RHC_PUBLIC_RPC_MAINNET,
-    rhcTestnetRpcUrl: env.ZGUARD_RHC_TESTNET_RPC_URL || RHC_PUBLIC_RPC_TESTNET,
+    rhcRpcUrl: env.ZGUARD_RHC_RPC_URL || defaultActiveRpc,
+    rhcFallbackRpcUrl: env.ZGUARD_RHC_FALLBACK_RPC_URL || defaultActiveFallback,
+    rhcMainnetRpcUrl,
+    rhcMainnetFallbackRpcUrl,
+    rhcTestnetRpcUrl,
+    rhcTestnetFallbackRpcUrl,
     simulationMethod:
       env.ZGUARD_SIMULATION_METHOD === "eth_simulateV1" ||
       env.ZGUARD_SIMULATION_METHOD === "debug_traceCall"
         ? env.ZGUARD_SIMULATION_METHOD
         : "auto",
+
+    baseRpcUrl: env.ZGUARD_BASE_RPC_URL || BASE_PUBLIC_RPC_MAINNET,
+    baseSepoliaRpcUrl: env.ZGUARD_BASE_SEPOLIA_RPC_URL || BASE_PUBLIC_RPC_SEPOLIA,
+    solanaRpcUrl: env.ZGUARD_SOLANA_RPC_URL || SOLANA_PUBLIC_RPC_MAINNET,
+    solanaDevnetRpcUrl: env.ZGUARD_SOLANA_DEVNET_RPC_URL || SOLANA_PUBLIC_RPC_DEVNET,
 
     stockRegistryUrl:
       env.ZGUARD_STOCK_REGISTRY_URL || "https://api.robinhood.com/rhj/assets",
@@ -149,11 +213,21 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ZGuardAppConfi
       "https://reference-data-directory.vercel.app/feeds-robinhood-mainnet.json",
     registryRefreshSeconds: Number(env.ZGUARD_REGISTRY_REFRESH_SECONDS || 900),
 
-    // Default payTo falls back to configured buyback wallet or zero-placeholder marked in open config
+    sequencerUptimeFeedAddress: env.ZGUARD_SEQUENCER_UPTIME_FEED || null,
+    sequencerGracePeriodSeconds: Number(env.ZGUARD_SEQUENCER_GRACE_PERIOD_SECONDS || 3600),
+    sequencerMaxBlockAgeSeconds: Number(env.ZGUARD_SEQUENCER_MAX_BLOCK_AGE_SECONDS || 900),
+
     x402PayTo:
       env.ZGUARD_X402_PAY_TO ||
       env.ZGUARD_BUYBACK_WALLET ||
       "0x0000000000000000000000000000000000004663",
+    x402SolanaPayTo: env.ZGUARD_X402_SOLANA_PAY_TO || null,
+    x402RelayerPrivateKey: env.ZGUARD_X402_RELAYER_PRIVATE_KEY || null,
+    x402SettlementMode:
+      env.ZGUARD_X402_SETTLEMENT_MODE === "onchain" ||
+      env.ZGUARD_X402_SETTLEMENT_MODE === "offchain"
+        ? env.ZGUARD_X402_SETTLEMENT_MODE
+        : "auto",
     pricesMicroUsdg: {
       verify: BigInt(env.ZGUARD_PRICE_VERIFY_MICRO_USDG ?? "3000"),
       simulate: BigInt(env.ZGUARD_PRICE_SIMULATE_MICRO_USDG ?? "5000"),
@@ -163,10 +237,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ZGuardAppConfi
     },
     devFreeCreditMicroUsdg: BigInt(
       env.ZGUARD_DEV_FREE_CREDIT_MICRO_USDG ??
-        (env.NODE_ENV === "production" ? "0" : "60000")
+        (env.NODE_ENV === "production" ? "0" : "90000")
     ),
     enableUsdcBase: env.ZGUARD_ENABLE_USDC_BASE === "true",
     enableUsdcSolana: env.ZGUARD_ENABLE_USDC_SOLANA === "true",
+
+    enableUrlFetch: env.ZGUARD_ENABLE_URL_FETCH !== "false",
+    urlFetchTimeoutMs: Number(env.ZGUARD_URL_FETCH_TIMEOUT_MS ?? 4000),
+    urlFetchMaxBytes: Number(env.ZGUARD_URL_FETCH_MAX_BYTES ?? 131_072),
 
     tokenTicker: env.ZGUARD_TOKEN_TICKER || "$ZGUARD",
     ponsTokenAddress: env.ZGUARD_PONS_TOKEN_ADDRESS || null,
@@ -191,6 +269,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ZGuardAppConfi
     zkHalo2Enabled: env.ZGUARD_ZK_HALO2_ENABLED !== "false",
     zkSp1ProverUrl: env.ZGUARD_ZK_SP1_PROVER_URL || null,
     zkVerifierAddress: env.ZGUARD_ZK_VERIFIER_ADDRESS || null,
+    zkVerifierPrivateKey:
+      env.ZGUARD_ZK_VERIFIER_PRIVATE_KEY || env.ZGUARD_DEPLOYER_PRIVATE_KEY || null,
     zkBatchSize: Number(env.ZGUARD_ZK_BATCH_SIZE ?? 10),
   };
 }

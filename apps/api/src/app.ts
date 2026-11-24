@@ -3,14 +3,15 @@ import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import type { PublicClient } from "viem";
 import {
-  NETWORK_RHC_MAINNET,
-  RHC_CANONICAL_ASSETS,
   RHC_MAINNET_CHAIN_ID,
+  RHC_TESTNET_CHAIN_ID,
   aggregateDecision,
   computePayloadHash,
   evaluateQuoteMatch,
+  getRhcChainProfile,
+  isSupportedRhcChainId,
   parseChainIdFromNetwork,
-  scanContent,
+  type ChargedInfo,
   type GuardRequest,
   type GuardResponse,
 } from "@zguard/sdk";
@@ -23,9 +24,15 @@ import {
   type TenantRecord,
 } from "./db/store.js";
 import { RhcRegistryService } from "./services/registry.js";
-import { createRhcPublicClient, refreshVerifiedUsdgDomain } from "./services/rhc-rpc.js";
+import {
+  createRhcClientForChain,
+  getRpcUrlsForChain,
+  refreshVerifiedUsdgDomain,
+} from "./services/rhc-rpc.js";
+import { checkSequencerHealth } from "./services/sequencer.js";
 import { simulateOnRhc } from "./services/simulate.js";
 import { evaluateTokenRiskRhc } from "./services/token-risk.js";
+import { scanContentWithRemoteUrl } from "./services/url-scanner.js";
 import { buildX402Quote, verifyAndConsumeXPayment } from "./services/x402.js";
 
 export interface AppDependencies {
@@ -51,12 +58,22 @@ export function createZGuardApp(deps: AppDependencies = {}): {
 } {
   const config = deps.config ?? loadConfig();
   const store = deps.store ?? createStore(config);
-  const rhcClient = createRhcPublicClient(config);
+  const testnetClient = createRhcClientForChain(config, RHC_TESTNET_CHAIN_ID);
+  const mainnetClient = createRhcClientForChain(config, RHC_MAINNET_CHAIN_ID);
+  const rhcClient =
+    config.activeChainId === RHC_MAINNET_CHAIN_ID ? mainnetClient : testnetClient;
   const registry = new RhcRegistryService(config);
 
-  // Kick off non-blocking USDG EIP-712 onchain domain check & registry warm-up
-  refreshVerifiedUsdgDomain(rhcClient).catch(() => undefined);
+  function getClientForChain(chainId: number): PublicClient {
+    return chainId === RHC_MAINNET_CHAIN_ID ? mainnetClient : testnetClient;
+  }
+
+  // Kick off non-blocking USDG EIP-712 onchain domain check on both Testnet 46630 & Mainnet 4663 + registry warm-up
+  refreshVerifiedUsdgDomain(testnetClient, RHC_TESTNET_CHAIN_ID).catch(() => undefined);
+  refreshVerifiedUsdgDomain(mainnetClient, RHC_MAINNET_CHAIN_ID).catch(() => undefined);
   registry.ensureFresh().catch(() => undefined);
+
+  const activeProfile = getRhcChainProfile(config.activeChainId);
 
   const app = new Hono();
 
@@ -72,7 +89,7 @@ export function createZGuardApp(deps: AppDependencies = {}): {
 
   /**
    * Billing & Auth Gate for paid endpoints (§4.3, §5.1, §8.1, §9 #7):
-   * - Accepts API key with sufficient USDG credit OR inline `X-PAYMENT` header (EIP-3009 USDG on 4663).
+   * - Accepts API key with sufficient USDG credit OR inline `X-PAYMENT` header (USDG on RHC 46630/4663, or optional Base/Solana USDC).
    * - If credit is exhausted / missing and no valid X-PAYMENT is supplied -> returns HTTP 402 with payable quote.
    * - If storage fails -> fail-closed abstain (`P-UNAVAIL`), NEVER allow!
    */
@@ -82,7 +99,13 @@ export function createZGuardApp(deps: AppDependencies = {}): {
     costMicroUsdg: bigint,
     description: string
   ): Promise<
-    | { ok: true; tenant: TenantRecord | null; chargedMicro: bigint }
+    | {
+        ok: true;
+        tenant: TenantRecord | null;
+        chargedMicro: bigint;
+        paidViaX402: boolean;
+        chargedMeta: ChargedInfo;
+      }
     | { ok: false; response: Response }
   > {
     const rawKey = extractBearerKey(c);
@@ -104,11 +127,11 @@ export function createZGuardApp(deps: AppDependencies = {}): {
       }
     }
 
-    // If X-PAYMENT is attached, verify and credit/settle immediately
     if (xPayment) {
       const verified = await verifyAndConsumeXPayment({
         config,
         client: rhcClient,
+        getRhcClient: getClientForChain,
         store,
         rawHeader: xPayment,
         minimumMicroUsdg: costMicroUsdg,
@@ -133,14 +156,28 @@ export function createZGuardApp(deps: AppDependencies = {}): {
           tenant = await store.addCredit(tenant.id, surplus);
         }
       }
-      return { ok: true, tenant, chargedMicro: costMicroUsdg };
+      return {
+        ok: true,
+        tenant,
+        chargedMicro: costMicroUsdg,
+        paidViaX402: true,
+        chargedMeta: {
+          asset: verified.assetSymbol,
+          amount: costMicroUsdg.toString(),
+          unit: "micro",
+          rail: verified.rail,
+          settlementTxHash: verified.settlementTxHash,
+        },
+      };
     }
 
-    // No X-PAYMENT: require valid tenant key with sufficient credit
     if (!tenant) {
       return {
         ok: false,
-        response: c.json(buildX402Quote(config, endpointPath, costMicroUsdg, description), 402),
+        response: c.json(
+          buildX402Quote(config, endpointPath, costMicroUsdg, description),
+          402
+        ),
       };
     }
 
@@ -148,11 +185,25 @@ export function createZGuardApp(deps: AppDependencies = {}): {
     if (!charged.ok) {
       return {
         ok: false,
-        response: c.json(buildX402Quote(config, endpointPath, costMicroUsdg, description), 402),
+        response: c.json(
+          buildX402Quote(config, endpointPath, costMicroUsdg, description),
+          402
+        ),
       };
     }
 
-    return { ok: true, tenant: charged.tenant, chargedMicro: costMicroUsdg };
+    return {
+      ok: true,
+      tenant: charged.tenant,
+      chargedMicro: costMicroUsdg,
+      paidViaX402: false,
+      chargedMeta: {
+        asset: "USDG",
+        amount: costMicroUsdg.toString(),
+        unit: "micro",
+        rail: activeProfile.network,
+      },
+    };
   }
 
   function computeBuybackShare(chargedMicro: bigint): bigint {
@@ -161,28 +212,43 @@ export function createZGuardApp(deps: AppDependencies = {}): {
 
   // --- Health & Open Config Readout ---
   app.get("/health", async (c) => {
+    const seq = await checkSequencerHealth(config, rhcClient, config.activeChainId).catch(
+      () => null
+    );
     return c.json({
       status: "ok",
       product: config.productName,
-      chainId: RHC_MAINNET_CHAIN_ID,
-      network: NETWORK_RHC_MAINNET,
+      chainId: config.activeChainId,
+      network: activeProfile.network,
+      isTestnet: activeProfile.isTestnet,
+      explorerUrl: activeProfile.explorerUrl,
+      faucetUrl: activeProfile.faucetUrl,
       storageDriver: store.driver,
-      registry: registry.getStats(),
+      sequencer: seq,
+      registry: registry.getStats(config.activeChainId),
     });
   });
 
   app.get("/v1/config", async (c) => {
     await registry.ensureFresh().catch(() => undefined);
-    const revenue = await store.getRevenueSummary().catch(() => ({
-      totalChargedMicroUsdg: "0",
-      totalBuybackMicroUsdg: "0",
-      receiptCount: 0,
-    }));
+    const [revenue, sequencer] = await Promise.all([
+      store.getRevenueSummary().catch(() => ({
+        totalChargedMicroUsdg: "0",
+        totalBuybackMicroUsdg: "0",
+        receiptCount: 0,
+      })),
+      checkSequencerHealth(config, rhcClient, config.activeChainId).catch(() => null),
+    ]);
 
     return c.json({
       productName: config.productName,
-      network: NETWORK_RHC_MAINNET,
-      chainId: RHC_MAINNET_CHAIN_ID,
+      network: activeProfile.network,
+      chainId: config.activeChainId,
+      isTestnet: activeProfile.isTestnet,
+      chainName: activeProfile.name,
+      explorerUrl: activeProfile.explorerUrl,
+      faucetUrl: activeProfile.faucetUrl,
+      supportedNetworks: ["eip155:46630", "eip155:4663"],
       apiKeyPrefix: config.apiKeyPrefix,
       storageDriver: store.driver,
       neonConfigured: Boolean(config.databaseUrl),
@@ -194,8 +260,14 @@ export function createZGuardApp(deps: AppDependencies = {}): {
         guard: config.pricesMicroUsdg.guard.toString(),
       },
       paymentRails: {
-        usdgRhc4663: RHC_CANONICAL_ASSETS.USDG.address,
+        primaryNetwork: activeProfile.network,
+        usdgAddress: activeProfile.usdgAddress,
+        wethAddress: activeProfile.wethAddress,
+        usdgRhc46630: getRhcChainProfile(RHC_TESTNET_CHAIN_ID).usdgAddress,
+        usdgRhc4663: getRhcChainProfile(RHC_MAINNET_CHAIN_ID).usdgAddress,
         payTo: config.x402PayTo,
+        settlementMode: config.x402SettlementMode,
+        relayerConfigured: Boolean(config.x402RelayerPrivateKey),
         usdcBaseEnabled: config.enableUsdcBase,
         usdcSolanaEnabled: config.enableUsdcSolana,
       },
@@ -220,9 +292,33 @@ export function createZGuardApp(deps: AppDependencies = {}): {
         halo2Enabled: config.zkHalo2Enabled,
         scope: "quote",
         verifierAddress: config.zkVerifierAddress,
+        onchainBroadcastEnabled: Boolean(
+          config.zkVerifierAddress && config.zkVerifierPrivateKey
+        ),
         batchSize: config.zkBatchSize,
       },
-      registry: registry.getStats(),
+      sequencer,
+      registry: registry.getStats(config.activeChainId),
+    });
+  });
+
+  // --- Public Registry Listing Endpoint for Web Registry View ---
+  app.get("/v1/registry", async (c) => {
+    await registry.ensureFresh().catch(() => undefined);
+    const qChain = Number(c.req.query("chainId") || config.activeChainId);
+    const chainId = isSupportedRhcChainId(qChain) ? qChain : config.activeChainId;
+    const prof = getRhcChainProfile(chainId);
+    return c.json({
+      chainId,
+      network: prof.network,
+      isTestnet: prof.isTestnet,
+      explorerUrl: prof.explorerUrl,
+      canonical: {
+        usdg: prof.usdgAddress,
+        weth: prof.wethAddress,
+      },
+      stockTokens: registry.listStockTokens(chainId),
+      stats: registry.getStats(chainId),
     });
   });
 
@@ -235,6 +331,7 @@ export function createZGuardApp(deps: AppDependencies = {}): {
       const verified = await verifyAndConsumeXPayment({
         config,
         client: rhcClient,
+        getRhcClient: getClientForChain,
         store,
         rawHeader: xPayment,
         minimumMicroUsdg: 1n,
@@ -266,7 +363,8 @@ export function createZGuardApp(deps: AppDependencies = {}): {
         creditMicroUsdg: tenant.creditMicroUsdg.toString(),
         asset: "USDG",
         unit: "micro",
-        network: NETWORK_RHC_MAINNET,
+        network: activeProfile.network,
+        chainId: config.activeChainId,
         createdAt: tenant.createdAt,
       },
       201
@@ -290,7 +388,8 @@ export function createZGuardApp(deps: AppDependencies = {}): {
       totalSpentMicroUsdg: tenant.totalSpentMicroUsdg.toString(),
       asset: "USDG",
       unit: "micro",
-      network: NETWORK_RHC_MAINNET,
+      network: activeProfile.network,
+      chainId: config.activeChainId,
     });
   });
 
@@ -333,7 +432,7 @@ export function createZGuardApp(deps: AppDependencies = {}): {
     const chainId = Number(c.req.param("chainId"));
     const address = c.req.param("address");
 
-    if (chainId !== RHC_MAINNET_CHAIN_ID || !/^0x[0-9a-fA-F]{40}$/.test(address)) {
+    if (!isSupportedRhcChainId(chainId) || !/^0x[0-9a-fA-F]{40}$/.test(address)) {
       return c.json(
         {
           observed: false,
@@ -345,13 +444,13 @@ export function createZGuardApp(deps: AppDependencies = {}): {
 
     await registry.ensureFresh().catch(() => undefined);
     const lower = address.toLowerCase();
+    const prof = getRhcChainProfile(chainId);
 
-    // Check canonical USDG, WETH, official Stock Token registry, or previously observed tokens
-    if (lower === RHC_CANONICAL_ASSETS.USDG.address.toLowerCase()) {
+    if (lower === prof.usdgAddress.toLowerCase()) {
       return c.json({
         observed: true,
         chainId,
-        address: RHC_CANONICAL_ASSETS.USDG.address,
+        address: prof.usdgAddress,
         kind: "usdg",
         symbol: "USDG",
         name: "Global Dollar",
@@ -359,11 +458,11 @@ export function createZGuardApp(deps: AppDependencies = {}): {
       });
     }
 
-    if (lower === RHC_CANONICAL_ASSETS.WETH.address.toLowerCase()) {
+    if (lower === prof.wethAddress.toLowerCase()) {
       return c.json({
         observed: true,
         chainId,
-        address: RHC_CANONICAL_ASSETS.WETH.address,
+        address: prof.wethAddress,
         kind: "other",
         symbol: "WETH",
         name: "Wrapped Ether",
@@ -371,7 +470,7 @@ export function createZGuardApp(deps: AppDependencies = {}): {
       });
     }
 
-    const stock = registry.getStockTokenByAddress(lower);
+    const stock = registry.getStockTokenByAddress(lower, chainId);
     if (stock) {
       return c.json({
         observed: true,
@@ -419,7 +518,8 @@ export function createZGuardApp(deps: AppDependencies = {}): {
       if (!gate.ok) return gate.response;
 
       const body = (await c.req.json().catch(() => ({}))) as GuardRequest;
-      const network = body.network ?? NETWORK_RHC_MAINNET;
+      const network = body.network ?? activeProfile.network;
+      const reqChainId = parseChainIdFromNetwork(network) ?? config.activeChainId;
       const quoteRes = evaluateQuoteMatch({
         network,
         quote: body.quote,
@@ -464,11 +564,7 @@ export function createZGuardApp(deps: AppDependencies = {}): {
         network,
         checks: { quote: quoteRes },
         flags: agg.flags,
-        charged: {
-          asset: "USDG",
-          amount: gate.chargedMicro.toString(),
-          unit: "micro",
-        },
+        charged: gate.chargedMeta,
         ...(zkAttestation ? { attestation: { zk: zkAttestation } } : {}),
         receiptMeta: { latencyMs: Date.now() - startMs },
       };
@@ -484,10 +580,16 @@ export function createZGuardApp(deps: AppDependencies = {}): {
 
       if (zkAttestation) {
         await store.upsertZkAttestation(zkAttestation);
+        const zkRpc = getRpcUrlsForChain(
+          config,
+          isSupportedRhcChainId(reqChainId) ? reqChainId : config.activeChainId
+        )[0];
         void proveQuoteAttestationAsync(zkAttestation, {
-          rpcUrl: config.rhcRpcUrl,
+          rpcUrl: zkRpc,
+          chainId: isSupportedRhcChainId(reqChainId) ? reqChainId : config.activeChainId,
           sp1ProverUrl: config.zkSp1ProverUrl ?? undefined,
           verifierAddress: config.zkVerifierAddress ?? undefined,
+          verifierPrivateKey: config.zkVerifierPrivateKey ?? undefined,
           onUpdated: (upd) => store.upsertZkAttestation(upd),
         });
       }
@@ -502,7 +604,7 @@ export function createZGuardApp(deps: AppDependencies = {}): {
             codes: ["P-UNAVAIL"],
             payload_hash: "0x" + "0".repeat(64),
             expires_at: null,
-            network: NETWORK_RHC_MAINNET,
+            network: activeProfile.network,
             checks: {},
             flags: [],
             charged: null,
@@ -514,20 +616,25 @@ export function createZGuardApp(deps: AppDependencies = {}): {
     }
   });
 
-  // --- 5. POST /v1/simulate (RHC 4663 Transaction Simulation — $0.005) ---
+  // --- 5. POST /v1/simulate (RHC Transaction Simulation — $0.005) ---
   app.post("/v1/simulate", async (c) => {
     const startMs = Date.now();
     const gate = await authorizeAndCharge(
       c,
       "/v1/simulate",
       config.pricesMicroUsdg.simulate,
-      "ZGuard RHC 4663 transaction simulation (/v1/simulate)"
+      "ZGuard RHC transaction simulation (/v1/simulate)"
     );
     if (!gate.ok) return gate.response;
 
     const body = (await c.req.json().catch(() => ({}))) as GuardRequest;
-    const network = body.network ?? NETWORK_RHC_MAINNET;
-    const simRes = await simulateOnRhc(config, rhcClient, { ...body, network });
+    const network = body.network ?? activeProfile.network;
+    const reqChainId = parseChainIdFromNetwork(network) ?? config.activeChainId;
+    const simRes = await simulateOnRhc(
+      config,
+      getClientForChain(reqChainId),
+      { ...body, network }
+    );
     const agg = aggregateDecision({
       checks: { simulation: simRes },
       modes: { simulation: "required" },
@@ -550,7 +657,7 @@ export function createZGuardApp(deps: AppDependencies = {}): {
       network,
       checks: { simulation: simRes },
       flags: agg.flags,
-      charged: { asset: "USDG", amount: gate.chargedMicro.toString(), unit: "micro" },
+      charged: gate.chargedMeta,
       receiptMeta: { latencyMs: Date.now() - startMs },
     };
 
@@ -566,14 +673,14 @@ export function createZGuardApp(deps: AppDependencies = {}): {
     return c.json(response);
   });
 
-  // --- 6. POST /v1/token-risk (RHC 4663 Token Risk — $0.01) ---
+  // --- 6. POST /v1/token-risk (RHC Token Risk — $0.01) ---
   app.post("/v1/token-risk", async (c) => {
     const startMs = Date.now();
     const gate = await authorizeAndCharge(
       c,
       "/v1/token-risk",
       config.pricesMicroUsdg.tokenRisk,
-      "ZGuard RHC 4663 token risk scan (/v1/token-risk)"
+      "ZGuard RHC token risk scan (/v1/token-risk)"
     );
     if (!gate.ok) return gate.response;
 
@@ -582,32 +689,36 @@ export function createZGuardApp(deps: AppDependencies = {}): {
       token?: string;
       recipient?: string;
     };
-    const network = body.network ?? NETWORK_RHC_MAINNET;
+    const network = body.network ?? activeProfile.network;
     const chainId = parseChainIdFromNetwork(network);
 
-    const riskRes =
-      chainId === RHC_MAINNET_CHAIN_ID
-        ? await evaluateTokenRiskRhc({
-            config,
-            client: rhcClient,
-            registry,
-            tokenAddress: body.token,
-            recipientForSnipeTax: body.recipient,
-          })
-        : {
-            decision: "abstain" as const,
-            codes: ["T-UNKNOWN" as const],
-            token: body.token ?? null,
-            kind: "other" as const,
-            holders: { count: null, top10Bps: null },
-            liquidity: { venue: "unknown" as const, locked: null, detail: { note: "Only eip155:4663 supported" } },
-            tax: { buyBps: null, sellBps: null, snipeTaxBps: null },
-            authorities: { owner: null, mintable: null, pausable: null },
-            pons: { factory: null, graduated: null, sellableTokens: null, reserves: null },
-          };
+    const riskRes = isSupportedRhcChainId(chainId)
+      ? await evaluateTokenRiskRhc({
+          config,
+          client: getClientForChain(chainId),
+          registry,
+          chainId,
+          tokenAddress: body.token,
+          recipientForSnipeTax: body.recipient,
+        })
+      : {
+          decision: "abstain" as const,
+          codes: ["T-UNKNOWN" as const],
+          token: body.token ?? null,
+          kind: "other" as const,
+          holders: { count: null, top10Bps: null },
+          liquidity: {
+            venue: "unknown" as const,
+            locked: null,
+            detail: { note: "Only Robinhood Chain eip155:46630 & eip155:4663 supported" },
+          },
+          tax: { buyBps: null, sellBps: null, snipeTaxBps: null },
+          authorities: { owner: null, mintable: null, pausable: null },
+          pons: { factory: null, graduated: null, sellableTokens: null, reserves: null },
+        };
 
-    if (chainId === RHC_MAINNET_CHAIN_ID && body.token && /^0x[0-9a-fA-F]{40}$/.test(body.token)) {
-      await store.upsertTokenObservation(RHC_MAINNET_CHAIN_ID, body.token, riskRes);
+    if (isSupportedRhcChainId(chainId) && body.token && /^0x[0-9a-fA-F]{40}$/.test(body.token)) {
+      await store.upsertTokenObservation(chainId, body.token, riskRes);
     }
 
     const agg = aggregateDecision({
@@ -630,7 +741,7 @@ export function createZGuardApp(deps: AppDependencies = {}): {
         ...(riskRes.metadataScan ? { content: riskRes.metadataScan } : {}),
       },
       flags: agg.flags,
-      charged: { asset: "USDG", amount: gate.chargedMicro.toString(), unit: "micro" },
+      charged: gate.chargedMeta,
       receiptMeta: { latencyMs: Date.now() - startMs },
     };
 
@@ -649,7 +760,7 @@ export function createZGuardApp(deps: AppDependencies = {}): {
     });
   });
 
-  // --- 7. POST /v1/check (Content / Metadata / URL Scanner — $0.005) ---
+  // --- 7. POST /v1/check (Content / Metadata / Remote URL Scanner — $0.005; failed/rejected URL is FREE per §2.2!) ---
   app.post("/v1/check", async (c) => {
     const startMs = Date.now();
     const gate = await authorizeAndCharge(
@@ -662,6 +773,7 @@ export function createZGuardApp(deps: AppDependencies = {}): {
 
     await registry.ensureFresh().catch(() => undefined);
     const body = (await c.req.json().catch(() => ({}))) as {
+      network?: string;
       content?: GuardRequest["content"];
       text?: string;
       url?: string;
@@ -669,6 +781,9 @@ export function createZGuardApp(deps: AppDependencies = {}): {
       name?: string;
       tokenAddress?: string;
     };
+
+    const network = body.network ?? activeProfile.network;
+    const reqChainId = parseChainIdFromNetwork(network) ?? config.activeChainId;
 
     const contentInput = body.content ?? {
       text: body.text,
@@ -678,7 +793,26 @@ export function createZGuardApp(deps: AppDependencies = {}): {
       tokenAddress: body.tokenAddress,
     };
 
-    const contentRes = scanContent(contentInput, registry.getCanonicalTickerMap());
+    const { result: contentRes, waiveCharge } = await scanContentWithRemoteUrl(
+      config,
+      contentInput,
+      registry.getCanonicalTickerMap(reqChainId)
+    );
+
+    // §2.2 Dev Brief: "Setiap tautan metadata yang dipindai: $0,005 (tautan gagal/ditolak: gratis)"
+    let finalChargedMicro = gate.chargedMicro;
+    let finalChargedMeta = gate.chargedMeta;
+    if (waiveCharge && gate.chargedMicro > 0n) {
+      if (gate.tenant) {
+        await store.addCredit(gate.tenant.id, gate.chargedMicro);
+      }
+      finalChargedMicro = 0n;
+      finalChargedMeta = {
+        ...gate.chargedMeta,
+        amount: "0",
+      };
+    }
+
     const decisionId = `dec_${randomUUID().replace(/-/g, "").slice(0, 20)}`;
 
     const response: GuardResponse = {
@@ -689,12 +823,12 @@ export function createZGuardApp(deps: AppDependencies = {}): {
           ? "content rules matched suspicious agent-targeted patterns"
           : contentRes.verdict,
       codes: contentRes.codes,
-      payload_hash: computePayloadHash({ network: NETWORK_RHC_MAINNET }),
+      payload_hash: computePayloadHash({ network }),
       expires_at: null,
-      network: NETWORK_RHC_MAINNET,
+      network,
       checks: { content: contentRes },
       flags: [],
-      charged: { asset: "USDG", amount: gate.chargedMicro.toString(), unit: "micro" },
+      charged: finalChargedMeta,
       receiptMeta: { latencyMs: Date.now() - startMs },
     };
 
@@ -702,8 +836,8 @@ export function createZGuardApp(deps: AppDependencies = {}): {
       decisionId,
       tenantId: gate.tenant?.id ?? null,
       endpoint: "/v1/check",
-      chargedMicroUsdg: gate.chargedMicro,
-      buybackMicroUsdg: computeBuybackShare(gate.chargedMicro),
+      chargedMicroUsdg: finalChargedMicro,
+      buybackMicroUsdg: computeBuybackShare(finalChargedMicro),
       response,
     });
 
@@ -727,34 +861,41 @@ export function createZGuardApp(deps: AppDependencies = {}): {
 
       const body = (await c.req.json().catch(() => ({}))) as GuardRequest;
       if (!body.network) {
-        return c.json({ error: "`network` is required (e.g. \"eip155:4663\")" }, 400);
+        return c.json(
+          { error: `\`network\` is required (e.g. "${activeProfile.network}")` },
+          400
+        );
       }
 
       const requestedChecks = body.checks ?? ["quote", "simulation", "token_risk"];
       const chainId = parseChainIdFromNetwork(body.network);
 
-      // §5.2: MVP abstains if network != eip155:4663 (unless quote-only check on enabled payment rail)
+      // §5.2: Full guard requires Robinhood Chain (Testnet 46630 or Mainnet 4663), unless quote-only check on enabled payment rail
       const isQuoteOnly =
         requestedChecks.length === 1 && requestedChecks[0] === "quote";
-      if (chainId !== RHC_MAINNET_CHAIN_ID && !isQuoteOnly) {
+      if (!isSupportedRhcChainId(chainId) && !isQuoteOnly) {
         const abstainResp: GuardResponse = {
           decisionId: `dec_${randomUUID().replace(/-/g, "").slice(0, 20)}`,
           decision: "abstain",
-          reason: `MVP full guard requires eip155:4663 (received ${body.network})`,
+          reason: `MVP full guard requires Robinhood Chain eip155:46630 or eip155:4663 (received ${body.network})`,
           codes: ["Q-004"],
           payload_hash: computePayloadHash(body),
           expires_at: null,
           network: body.network,
           checks: {},
           flags: [],
-          charged: { asset: "USDG", amount: gate.chargedMicro.toString(), unit: "micro" },
+          charged: gate.chargedMeta,
         };
         return c.json(abstainResp);
       }
 
+      const targetRhcChainId = isSupportedRhcChainId(chainId)
+        ? chainId
+        : config.activeChainId;
+      const chainClient = getClientForChain(targetRhcChainId);
+
       await registry.ensureFresh().catch(() => undefined);
 
-      // Derive candidate token address per §5.2: explicit `body.token`, else `quote.asset`, else `intent.expectedOut.token` / `intent.to`
       const derivedToken =
         body.token ??
         body.quote?.asset ??
@@ -773,11 +914,11 @@ export function createZGuardApp(deps: AppDependencies = {}): {
         });
       }
 
-      // 2 & 3. Run RHC Simulation + RHC Token Risk concurrently for sub-800ms latency (§9 latency target)!
+      // 2, 3 & 4. Run RHC Simulation + RHC Token Risk + Remote Content URL Scan concurrently!
       const upstreamUndecodable =
         checksOut.quote?.codes.includes("Q-DECODE") === true;
 
-      const [simResult, tokenRiskResult] = await Promise.all([
+      const [simResult, tokenRiskResult, contentWrap] = await Promise.all([
         requestedChecks.includes("simulation")
           ? upstreamUndecodable
             ? Promise.resolve({
@@ -790,16 +931,24 @@ export function createZGuardApp(deps: AppDependencies = {}): {
                 calls: [],
                 notes: ["Skipped simulation because upstream payload failed to decode"],
               })
-            : simulateOnRhc(config, rhcClient, body)
+            : simulateOnRhc(config, chainClient, body)
           : Promise.resolve(undefined),
         requestedChecks.includes("token_risk")
           ? evaluateTokenRiskRhc({
               config,
-              client: rhcClient,
+              client: chainClient,
               registry,
+              chainId: targetRhcChainId,
               tokenAddress: derivedToken,
               recipientForSnipeTax: body.options?.recipientForSnipeTax,
             })
+          : Promise.resolve(undefined),
+        body.content || requestedChecks.includes("content")
+          ? scanContentWithRemoteUrl(
+              config,
+              body.content,
+              registry.getCanonicalTickerMap(targetRhcChainId)
+            )
           : Promise.resolve(undefined),
       ]);
 
@@ -808,14 +957,13 @@ export function createZGuardApp(deps: AppDependencies = {}): {
         checksOut.token_risk = tokenRiskResult;
         if (derivedToken && /^0x[0-9a-fA-F]{40}$/.test(derivedToken)) {
           void store
-            .upsertTokenObservation(RHC_MAINNET_CHAIN_ID, derivedToken, tokenRiskResult)
+            .upsertTokenObservation(targetRhcChainId, derivedToken, tokenRiskResult)
             .catch(() => undefined);
         }
       }
 
-      // 4. Content check if `content` or quote text or token metadata scan is present
-      if (body.content || requestedChecks.includes("content")) {
-        checksOut.content = scanContent(body.content, registry.getCanonicalTickerMap());
+      if (contentWrap) {
+        checksOut.content = contentWrap.result;
       } else if (tokenRiskResult?.metadataScan) {
         checksOut.content = tokenRiskResult.metadataScan;
       } else {
@@ -826,7 +974,6 @@ export function createZGuardApp(deps: AppDependencies = {}): {
         };
       }
 
-      // Build effective modes for ONLY the requested checks (+ content advisory unless explicitly requested)
       const activeModes = {
         ...config.checkModes,
         content: requestedChecks.includes("content") ? "required" : "advisory",
@@ -873,11 +1020,7 @@ export function createZGuardApp(deps: AppDependencies = {}): {
         network: body.network,
         checks: checksOut,
         flags: agg.flags,
-        charged: {
-          asset: "USDG",
-          amount: gate.chargedMicro.toString(),
-          unit: "micro",
-        },
+        charged: gate.chargedMeta,
         ...(zkAttestation ? { attestation: { zk: zkAttestation } } : {}),
         receiptMeta: { latencyMs: Date.now() - startMs },
       };
@@ -893,10 +1036,13 @@ export function createZGuardApp(deps: AppDependencies = {}): {
 
       if (zkAttestation) {
         await store.upsertZkAttestation(zkAttestation);
+        const zkRpc = getRpcUrlsForChain(config, targetRhcChainId)[0];
         void proveQuoteAttestationAsync(zkAttestation, {
-          rpcUrl: config.rhcRpcUrl,
+          rpcUrl: zkRpc,
+          chainId: targetRhcChainId,
           sp1ProverUrl: config.zkSp1ProverUrl ?? undefined,
           verifierAddress: config.zkVerifierAddress ?? undefined,
+          verifierPrivateKey: config.zkVerifierPrivateKey ?? undefined,
           onUpdated: (upd) => store.upsertZkAttestation(upd),
         });
       }
@@ -911,7 +1057,7 @@ export function createZGuardApp(deps: AppDependencies = {}): {
             codes: ["P-UNAVAIL"],
             payload_hash: "0x" + "0".repeat(64),
             expires_at: null,
-            network: NETWORK_RHC_MAINNET,
+            network: activeProfile.network,
             checks: {},
             flags: [],
             charged: null,

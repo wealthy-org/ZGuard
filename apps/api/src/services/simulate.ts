@@ -9,8 +9,8 @@ import {
 } from "viem";
 import {
   KNOWN_RHC_CONTRACTS,
-  RHC_CANONICAL_ASSETS,
-  RHC_MAINNET_CHAIN_ID,
+  getRhcChainProfile,
+  isSupportedRhcChainId,
   parseChainIdFromNetwork,
   type BalanceChange,
   type EvmCallObject,
@@ -22,6 +22,7 @@ import {
 } from "@zguard/sdk";
 import type { ZGuardAppConfig } from "../config.js";
 import { rawRhcRpc } from "./rhc-rpc.js";
+import { checkSequencerHealth } from "./sequencer.js";
 
 const ERC20_META_ABI = parseAbi([
   "function balanceOf(address account) view returns (uint256)",
@@ -76,17 +77,19 @@ function sanitizeSimArg(val: unknown): unknown {
   return val;
 }
 
-function buildCallFromRequest(req: GuardRequest): {
-  ok: true;
-  call: { from: Hex; to: Hex; data: Hex; value: Hex };
-  syntheticEip3009?: boolean;
-} | { ok: false; reason: string } {
+function buildCallFromRequest(req: GuardRequest):
+  | {
+      ok: true;
+      call: { from: Hex; to: Hex; data: Hex; value: Hex };
+      syntheticEip3009?: boolean;
+    }
+  | { ok: false; reason: string } {
   const payload = req.payload;
   if (!payload) {
     return { ok: false, reason: "No payload supplied to simulate" };
   }
 
-  // 1. EIP-3009 authorization: simulate the underlying token transfer on RHC 4663 from `authorization.from` to `authorization.to`
+  // 1. EIP-3009 authorization: simulate the underlying token transfer on RHC (46630 / 4663)
   if (payload.type === "eip3009") {
     const auth = payload.authorization;
     const tokenAddr = auth?.domain?.verifyingContract ?? req.quote?.asset;
@@ -204,9 +207,9 @@ function buildCallFromRequest(req: GuardRequest): {
 }
 
 /**
- * Simulates a candidate payment or swap against live Robinhood Chain (4663) state (§6.2).
- * Primary method: `eth_simulateV1` (verified active on RHC 4663 mainnet RPC) with `traceTransfers: true`,
- * extracting exact ETH & ERC-20 balance deltas, surfaced approvals, and named calls (PoolManager v4, pons hooks).
+ * Simulates a candidate payment or swap against live Robinhood Chain (Testnet 46630 or Mainnet 4663) state (§6.2).
+ * Primary method: `eth_simulateV1` with `traceTransfers: true`, extracting exact ETH & ERC-20 balance deltas,
+ * surfaced approvals, L2 sequencer health, and named calls (PoolManager v4, pons hooks, curves).
  */
 export async function simulateOnRhc(
   config: ZGuardAppConfig,
@@ -214,7 +217,7 @@ export async function simulateOnRhc(
   req: GuardRequest
 ): Promise<SimulationCheckResult> {
   const chainId = parseChainIdFromNetwork(req.network);
-  if (chainId !== RHC_MAINNET_CHAIN_ID) {
+  if (!isSupportedRhcChainId(chainId)) {
     return {
       decision: "abstain",
       codes: ["S-FAIL"],
@@ -223,7 +226,9 @@ export async function simulateOnRhc(
       balanceChanges: [],
       approvals: [],
       calls: [],
-      notes: [`Simulation MVP supports eip155:4663 only (received ${req.network})`],
+      notes: [
+        `Simulation supports Robinhood Chain eip155:46630 (Testnet) and eip155:4663 (Mainnet) (received ${req.network})`,
+      ],
     };
   }
 
@@ -242,17 +247,16 @@ export async function simulateOnRhc(
   }
 
   const { call, syntheticEip3009 } = built;
+  const profile = getRhcChainProfile(chainId);
   const notes: string[] = [];
   const codes: ReasonCode[] = [];
 
   try {
-    // Check pre-state balance for EIP-3009 payer so simulation works even for dry-run fixtures with 0 balance if needed,
-    // while accurately reporting real reverts for non-fixture wallets or real contract calls!
-    let stateOverrides: Record<string, unknown> | undefined;
+    const seqHealthPromise = checkSequencerHealth(config, client, chainId);
+
     if (syntheticEip3009 && req.payload?.authorization) {
       const payer = call.from.toLowerCase();
-      const usdgAddr = RHC_CANONICAL_ASSETS.USDG.address.toLowerCase();
-      if (call.to.toLowerCase() === usdgAddr) {
+      if (call.to.toLowerCase() === profile.usdgAddress.toLowerCase()) {
         const realBal = await client
           .readContract({
             address: call.to,
@@ -268,19 +272,38 @@ export async function simulateOnRhc(
       }
     }
 
-    const simBlocks = await rawRhcRpc<EthSimulateBlockResult[]>(config, "eth_simulateV1", [
-      {
-        blockStateCalls: [
+    const [simBlocks, seqHealth] = await Promise.all([
+      rawRhcRpc<EthSimulateBlockResult[]>(
+        config,
+        "eth_simulateV1",
+        [
           {
-            calls: [call],
-            ...(stateOverrides ? { stateOverrides } : {}),
+            blockStateCalls: [{ calls: [call] }],
+            traceTransfers: true,
+            validation: false,
           },
+          "latest",
         ],
-        traceTransfers: true,
-        validation: false,
-      },
-      "latest",
+        chainId
+      ),
+      seqHealthPromise,
     ]);
+
+    if (!seqHealth.up || !seqHealth.gracePeriodPassed) {
+      return {
+        decision: "abstain",
+        codes: ["S-SEQUENCER"],
+        method: "eth_simulateV1",
+        status: "unknown",
+        gasUsed: null,
+        balanceChanges: [],
+        approvals: [],
+        calls: [],
+        notes: [
+          `RHC (${chainId}) L2 sequencer health check failed (up=${seqHealth.up}, gracePassed=${seqHealth.gracePeriodPassed}, blockAge=${seqHealth.latestBlockAgeSeconds}s)`,
+        ],
+      };
+    }
 
     const firstBlock = simBlocks?.[0];
     const callRes = firstBlock?.calls?.[0];
@@ -301,7 +324,6 @@ export async function simulateOnRhc(
     const succeeded = callRes.status === "0x1";
     const logs = callRes.logs ?? [];
 
-    // Named calls from target + touched log emitters (PoolManager v4, pons meme hook, curves, routers)
     const touchedAddresses = new Set<string>([call.to.toLowerCase()]);
     for (const lg of logs) {
       if (lg.address) touchedAddresses.add(lg.address.toLowerCase());
@@ -321,8 +343,6 @@ export async function simulateOnRhc(
       };
     });
 
-    // Decode Transfer & Approval logs
-    // netDeltaMap key: `${accountLower}|${tokenLower}`
     const netDeltas = new Map<string, bigint>();
     const approvals: SurfacedApproval[] = [];
     const ZERO_ETH = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
@@ -335,7 +355,6 @@ export async function simulateOnRhc(
         const fromAddr = topicToAddress(lg.topics[1]);
         const toAddr = topicToAddress(lg.topics[2]);
         const rawAmt = lg.data && lg.data !== "0x" ? BigInt(lg.data) : 0n;
-        //eth_simulateV1 traceTransfers emits 0xeeee...eeee for native ETH transfers
         const assetId = tokenAddr === ZERO_ETH ? "ETH" : tokenAddr;
 
         if (fromAddr && fromAddr !== "0x0000000000000000000000000000000000000000") {
@@ -375,7 +394,6 @@ export async function simulateOnRhc(
       }
     }
 
-    // Also inspect direct approve() calldata even if tx reverted or token didn't emit standard event
     if (call.data.length >= 138 && call.data.slice(0, 10).toLowerCase() === "0x095ea7b3") {
       const spender = `0x${call.data.slice(34, 74).toLowerCase()}`;
       const amt = BigInt(`0x${call.data.slice(74, 138)}`);
@@ -393,7 +411,6 @@ export async function simulateOnRhc(
       }
     }
 
-    // Read pre-state balances on RHC 4663 so `before` and `after` are genuine onchain balances!
     const balanceChanges: BalanceChange[] = [];
     for (const [key, delta] of netDeltas.entries()) {
       if (delta === 0n) continue;
@@ -437,7 +454,6 @@ export async function simulateOnRhc(
       });
     }
 
-    // Check unexpected approvals (§6.2.2 & §5.3 S-APPROVE)
     const allowedApprovals = req.payload?.intent?.allowApprovals ?? [];
     for (const app of approvals) {
       const permitted = allowedApprovals.some(
@@ -459,7 +475,7 @@ export async function simulateOnRhc(
 
     if (!succeeded) {
       const errMsg = callRes.error?.message || "execution reverted";
-      notes.push(`Simulation reverted on RHC 4663: ${errMsg}`);
+      notes.push(`Simulation reverted on RHC (${chainId}): ${errMsg}`);
       codes.push("S-REVERT");
       return {
         decision: "deny",
@@ -474,7 +490,6 @@ export async function simulateOnRhc(
       };
     }
 
-    // Compare simulated balance changes against quote (0 tolerance) or intent.expectedOut (§6.2.3)
     if (req.quote) {
       const expectedPayee = req.quote.payTo.toLowerCase();
       const expectedAsset =
@@ -533,7 +548,6 @@ export async function simulateOnRhc(
       notes,
     };
   } catch (err) {
-    // §6.2.5: Infrastructure/RPC failure -> fail-closed abstain S-FAIL, NEVER allow
     return {
       decision: "abstain",
       codes: ["S-FAIL"],
@@ -544,7 +558,7 @@ export async function simulateOnRhc(
       approvals: [],
       calls: [],
       notes: [
-        `Simulation RPC failed on RHC 4663: ${err instanceof Error ? err.message : String(err)}`,
+        `Simulation RPC failed on RHC (${chainId}): ${err instanceof Error ? err.message : String(err)}`,
       ],
     };
   }

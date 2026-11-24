@@ -9,7 +9,10 @@ import {
 import {
   RHC_CANONICAL_ASSETS,
   RHC_EXPLORER_MAINNET,
+  RHC_EXPLORER_TESTNET,
   RHC_MAINNET_CHAIN_ID,
+  RHC_TESTNET_ASSETS,
+  RHC_TESTNET_CHAIN_ID,
   verifyContractEip712DomainOnchain,
 } from "@zguard/sdk";
 import type { ZGuardAppConfig } from "../config.js";
@@ -26,20 +29,53 @@ export const robinhoodMainnet: Chain = defineChain({
   },
 });
 
-export function createRhcPublicClient(config: ZGuardAppConfig): PublicClient {
-  const urls = Array.from(
-    new Set([config.rhcRpcUrl, config.rhcFallbackRpcUrl].filter(Boolean))
-  );
+export const robinhoodTestnet: Chain = defineChain({
+  id: RHC_TESTNET_CHAIN_ID,
+  name: "Robinhood Chain Testnet",
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+  rpcUrls: {
+    default: { http: ["https://rpc.testnet.chain.robinhood.com"] },
+  },
+  blockExplorers: {
+    default: { name: "Blockscout", url: RHC_EXPLORER_TESTNET },
+  },
+  testnet: true,
+});
 
+export function getRpcUrlsForChain(config: ZGuardAppConfig, chainId: number): string[] {
+  if (chainId === config.activeChainId) {
+    return Array.from(
+      new Set([config.rhcRpcUrl, config.rhcFallbackRpcUrl].filter(Boolean))
+    );
+  }
+  if (chainId === RHC_MAINNET_CHAIN_ID) {
+    return Array.from(
+      new Set([config.rhcMainnetRpcUrl, config.rhcMainnetFallbackRpcUrl].filter(Boolean))
+    );
+  }
+  return Array.from(
+    new Set([config.rhcTestnetRpcUrl, config.rhcTestnetFallbackRpcUrl].filter(Boolean))
+  );
+}
+
+export function createRhcClientForChain(
+  config: ZGuardAppConfig,
+  chainId: number = config.activeChainId
+): PublicClient {
+  const urls = getRpcUrlsForChain(config, chainId);
   const transport =
     urls.length > 1
       ? fallback(urls.map((u) => http(u, { timeout: 10_000 })))
       : http(urls[0], { timeout: 10_000 });
 
   return createPublicClient({
-    chain: robinhoodMainnet,
+    chain: chainId === RHC_MAINNET_CHAIN_ID ? robinhoodMainnet : robinhoodTestnet,
     transport,
   });
+}
+
+export function createRhcPublicClient(config: ZGuardAppConfig): PublicClient {
+  return createRhcClientForChain(config, config.activeChainId);
 }
 
 /**
@@ -48,11 +84,10 @@ export function createRhcPublicClient(config: ZGuardAppConfig): PublicClient {
 export async function rawRhcRpc<T = unknown>(
   config: ZGuardAppConfig,
   method: string,
-  params: unknown[]
+  params: unknown[],
+  chainId: number = config.activeChainId
 ): Promise<T> {
-  const urls = Array.from(
-    new Set([config.rhcRpcUrl, config.rhcFallbackRpcUrl].filter(Boolean))
-  );
+  const urls = getRpcUrlsForChain(config, chainId);
 
   let lastErr: unknown;
   for (const url of urls) {
@@ -84,12 +119,15 @@ export async function rawRhcRpc<T = unknown>(
 }
 
 /**
- * Verifies USDG's EIP-712 domain directly from the installed contract on RHC 4663 (§2.1).
+ * Verifies USDG's EIP-712 domain directly from the installed contracts on RHC Testnet (46630) & Mainnet (4663) (§2.1).
  */
-export async function refreshVerifiedUsdgDomain(client: PublicClient): Promise<void> {
-  await verifyContractEip712DomainOnchain(
-    client,
-    RHC_MAINNET_CHAIN_ID,
-    RHC_CANONICAL_ASSETS.USDG.address
-  ).catch(() => undefined);
+export async function refreshVerifiedUsdgDomain(
+  client: PublicClient,
+  chainId: number = RHC_TESTNET_CHAIN_ID
+): Promise<void> {
+  const addr =
+    chainId === RHC_MAINNET_CHAIN_ID
+      ? RHC_CANONICAL_ASSETS.USDG.address
+      : RHC_TESTNET_ASSETS.USDG.address;
+  await verifyContractEip712DomainOnchain(client, chainId, addr).catch(() => undefined);
 }
