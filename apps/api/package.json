@@ -1,0 +1,31 @@
+{
+  "name": "@zguard/api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ZGuard Hosted API (/v1/*) on Hono + Neon Serverless Postgres + Robinhood Chain 4663",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc -p tsconfig.json",
+    "test": "tsx --test test/acceptance.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:push": "drizzle-kit push"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.14.2",
+    "@neondatabase/serverless": "^1.0.0",
+    "@zguard/sdk": "workspace:*",
+    "@zguard/zk": "workspace:*",
+    "drizzle-orm": "^0.43.1",
+    "hono": "^4.7.10",
+    "viem": "^2.30.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "@zguard/mcp": "workspace:*",
+    "drizzle-kit": "^0.31.1"
+  }
+}
