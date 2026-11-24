@@ -357,7 +357,7 @@ export function ApiPage({ navigate }: { navigate: Navigate }) {
         <div className="mx-auto grid max-w-7xl gap-6 px-4 sm:px-6 lg:grid-cols-12 lg:px-8">
           <Reveal className="lg:col-span-7">
             <div className="overflow-hidden rounded-3xl border border-white/10 bg-black">
-              <div className="flex gap-1 border-b border-white/10 bg-[#070708] p-2">
+              <div className="flex gap-1 overflow-x-auto border-b border-white/10 bg-[#070708] p-2">
                 {tabs.map(([id, label]) => (
                   <button
                     key={id}
@@ -387,19 +387,19 @@ export function ApiPage({ navigate }: { navigate: Navigate }) {
                 <div className="font-mono text-[10px] uppercase tracking-[0.22em] text-zinc-500">Revenue loop · proposed</div>
                 <h3 className="mt-4 font-display text-2xl leading-tight text-white">Net API revenue flows to buyback and burn.</h3>
               </div>
-              <div className="my-8 flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
+              <div className="my-8 flex flex-col items-stretch gap-2 sm:flex-row sm:items-center lg:flex-col lg:items-stretch xl:flex-row xl:items-center">
                 {[
                   { t: 'Hosted API revenue', d: 'USDG on RHC' },
                   { t: 'Buyback', d: '$ZGUARD (open config)' },
                   { t: 'Burn', d: '0x…dEaD' },
                 ].map((n, i) => (
-                  <div key={n.t} className="flex flex-1 flex-col items-stretch sm:flex-row sm:items-center">
-                    <div className="flex-1 rounded-2xl border border-white/15 bg-black p-4">
+                  <div key={n.t} className="flex min-w-0 flex-1 flex-col items-stretch sm:flex-row sm:items-center lg:flex-col lg:items-stretch xl:flex-row xl:items-center">
+                    <div className="min-w-0 flex-1 rounded-2xl border border-white/15 bg-black p-4">
                       <div className="font-display text-sm text-white">{n.t}</div>
                       <div className="mt-1 font-mono text-[10px] text-zinc-500">{n.d}</div>
                     </div>
-                    {i < 2 && <FlowConnector delay={i * 0.6} vertical />}
-                    {i < 2 && <span className="hidden sm:block"><FlowConnector delay={i * 0.6} /></span>}
+                    {i < 2 && <span className="sm:hidden lg:block xl:hidden"><FlowConnector delay={i * 0.6} vertical /></span>}
+                    {i < 2 && <span className="hidden sm:block lg:hidden xl:block xl:[&>div]:!w-8"><FlowConnector delay={i * 0.6} /></span>}
                   </div>
                 ))}
               </div>

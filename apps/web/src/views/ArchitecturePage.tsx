@@ -10,8 +10,9 @@ const FLOW = ['Callers', 'ZGuard core', 'Decision', 'Signer wrapper', 'RHC 4663'
 
 function FlowRow() {
   return (
-    <div className="overflow-x-auto pb-4">
-      <div className="flex min-w-max items-stretch">
+    <div className="pb-4">
+      {/* Vertical pipeline on phones/tablets, full-width horizontal row on desktop */}
+      <div className="flex flex-col items-stretch lg:flex-row">
         {FLOW.map((f, i) => (
           <Fragment key={f}>
             <motion.div
@@ -20,12 +21,17 @@ function FlowRow() {
               viewport={{ once: true }}
               transition={{ delay: i * 0.1, duration: 0.6, ease: EASE }}
               whileHover={{ y: -4 }}
-              className="flex w-44 flex-col justify-center rounded-2xl border border-white/15 bg-black/70 p-5"
+              className="flex items-center gap-4 rounded-2xl border border-white/15 bg-black/70 px-5 py-4 lg:min-w-0 lg:flex-1 lg:flex-col lg:items-start lg:justify-center lg:gap-0 lg:p-5"
             >
               <span className="font-mono text-[10px] text-zinc-600">0{i + 1}</span>
-              <span className="mt-2 font-display text-lg text-white">{f}</span>
+              <span className="font-display text-lg text-white lg:mt-2">{f}</span>
             </motion.div>
-            {i < FLOW.length - 1 && <FlowConnector delay={i * 0.35} />}
+            {i < FLOW.length - 1 && (
+              <>
+                <span className="lg:hidden"><FlowConnector delay={i * 0.35} vertical /></span>
+                <span className="hidden lg:flex lg:items-center"><FlowConnector delay={i * 0.35} /></span>
+              </>
+            )}
           </Fragment>
         ))}
       </div>
@@ -45,7 +51,8 @@ function Stack3D() {
   const [exploded, setExploded] = useState(false);
   return (
     <div>
-      <div className="perspective-2200 relative flex h-[440px] items-center justify-center overflow-hidden rounded-3xl border border-white/10 bg-black bg-zguard-dots">
+      <div className="perspective-2200 relative flex h-[340px] items-center justify-center overflow-hidden rounded-3xl border border-white/10 bg-black bg-zguard-dots sm:h-[440px]">
+        <div className="perspective-2200 scale-[0.72] sm:scale-100">
         <motion.div
           animate={{ rotateX: 62, rotateZ: [-32, -22, -32] }}
           transition={{ rotateZ: { duration: 12, repeat: Infinity, ease: 'easeInOut' }, rotateX: { duration: 1 } }}
@@ -68,6 +75,7 @@ function Stack3D() {
             </motion.div>
           ))}
         </motion.div>
+        </div>
       </div>
       <button
         type="button"

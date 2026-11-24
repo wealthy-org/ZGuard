@@ -233,7 +233,7 @@ export function ZkPage() {
                     key={cid}
                     type="button"
                     onClick={() => reset(system, fixture, cid)}
-                    className={`rounded-full px-3.5 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.14em] transition-all ${
+                    className={`whitespace-nowrap rounded-full px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.06em] transition-all sm:px-3.5 sm:tracking-[0.14em] ${
                       chainId === cid ? 'bg-white text-black' : 'text-zinc-500 hover:text-white'
                     }`}
                   >
@@ -247,7 +247,7 @@ export function ZkPage() {
                     key={f}
                     type="button"
                     onClick={() => reset(system, f)}
-                    className={`rounded-full px-4 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.16em] transition-all ${
+                    className={`whitespace-nowrap rounded-full px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.08em] transition-all sm:px-4 sm:tracking-[0.16em] ${
                       fixture === f ? 'bg-white text-black' : 'text-zinc-500 hover:text-white'
                     }`}
                   >

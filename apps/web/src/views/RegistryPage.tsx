@@ -191,7 +191,7 @@ function Resolver({ chainId, setChainId }: { chainId: ActiveChain; setChainId: (
           <button
             type="button"
             onClick={() => handleChainChange(46630)}
-            className={`rounded-xl py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.14em] transition ${
+            className={`whitespace-nowrap rounded-xl px-1 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.06em] transition sm:tracking-[0.14em] ${
               chainId === 46630 ? 'bg-white text-black' : 'text-zinc-400 hover:text-white'
             }`}
           >
@@ -200,7 +200,7 @@ function Resolver({ chainId, setChainId }: { chainId: ActiveChain; setChainId: (
           <button
             type="button"
             onClick={() => handleChainChange(4663)}
-            className={`rounded-xl py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.14em] transition ${
+            className={`whitespace-nowrap rounded-xl px-1 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.06em] transition sm:tracking-[0.14em] ${
               chainId === 4663 ? 'bg-white text-black' : 'text-zinc-400 hover:text-white'
             }`}
           >
