@@ -2,11 +2,20 @@ import type { Metadata } from "next";
 import "../index.css";
 
 export const metadata: Metadata = {
-  title: "ZGuard — Scanner & Guard Layer on Robinhood Chain (4663)",
+  title: "ZGuard — Scanner & Guard Layer on Robinhood Chain (4663 / Testnet 46630)",
   description:
     "Pre-signing quote-match, RHC 4663 transaction simulation, RHC token risk, and BN254 ZK quote attestations for AI agents and wallets.",
   icons: {
-    icon: "/logo.jpg",
+    icon: "/icon.svg",
+    shortcut: "/icon.svg",
+    apple: "/icon.svg",
+  },
+  manifest: "/manifest.webmanifest",
+  openGraph: {
+    title: "ZGuard — Scanner & Guard Layer on Robinhood Chain",
+    description:
+      "Pre-signing quote-match, RHC simulation, token risk, and BN254 ZK attestations for AI agents and wallets.",
+    type: "website",
   },
 };
 
