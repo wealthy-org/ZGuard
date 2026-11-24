@@ -42,6 +42,7 @@ function createTestApi(overrides: Record<string, string> = {}) {
   const cfg = loadConfig({
     ...process.env,
     DATABASE_URL: "",
+    ZGUARD_ACTIVE_CHAIN_ID: "4663",
     ZGUARD_DEV_FREE_CREDIT_MICRO_USDG: "60000",
     ZGUARD_X402_PAY_TO: PAYEE_A,
     ...overrides,

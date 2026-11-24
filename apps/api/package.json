@@ -8,7 +8,7 @@
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "build": "tsc -p tsconfig.json",
-    "test": "tsx --test test/acceptance.test.ts",
+    "test": "tsx --test test/acceptance.test.ts test/testnet-46630.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push"
