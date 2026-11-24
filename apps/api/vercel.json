@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "buildCommand": "pnpm install --frozen-lockfile && pnpm --filter @zguard/sdk build && pnpm --filter @zguard/zk build && pnpm --filter @zguard/api build",
+  "installCommand": "pnpm install --frozen-lockfile",
+  "framework": null,
+  "functions": [
+    {
+      "includeFiles": "src/**/*"
+    }
+  ]
+}
