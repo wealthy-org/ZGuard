@@ -75,7 +75,7 @@ export function IntroSequence({ onComplete }: IntroSequenceProps) {
             initial={{ y: '110%' }}
             animate={{ y: phase >= 2 ? '0%' : '110%' }}
             transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
-            className="font-display text-4xl sm:text-6xl tracking-[-0.06em] text-white"
+            className="font-display text-[clamp(1.875rem,9.5vw,2.25rem)] sm:text-6xl tracking-[-0.06em] text-white"
           >
             ZGUARD
           </motion.div>

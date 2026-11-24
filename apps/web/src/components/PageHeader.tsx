@@ -27,7 +27,7 @@ export function PageHeader({ kicker, lines, desc, aside }: PageHeaderProps) {
             <span className="h-px w-10 bg-white/60" />
             {kicker}
           </motion.div>
-          <h1 className="font-display text-5xl leading-[0.92] text-white sm:text-6xl lg:text-7xl">
+          <h1 className="font-display text-[clamp(2.125rem,11vw,3rem)] leading-[0.92] text-white sm:text-6xl lg:text-6xl xl:text-7xl">
             <LineReveal lines={lines} immediate delay={0.2} />
           </h1>
         </div>

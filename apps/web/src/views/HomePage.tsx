@@ -260,7 +260,7 @@ function CheckCard({
               <Icon className="h-4 w-4 text-white" strokeWidth={1.6} />
             </div>
             <div className="relative mt-5 h-52 overflow-hidden rounded-2xl border border-white/10 bg-black/60 bg-zguard-dots">
-              <motion.div style={{ x: illoX }} className="absolute inset-y-0 -inset-x-6">
+              <motion.div style={{ x: illoX }} className="absolute inset-0 lg:-inset-x-6">
                 {c.illo}
               </motion.div>
             </div>
@@ -366,7 +366,7 @@ function PinnedChecks({ navigate }: { navigate: Navigate }) {
             </div>
             <LineReveal
               lines={['Three checks.', { text: 'One verdict.', muted: true }]}
-              className="font-display text-5xl leading-[0.92] text-white sm:text-6xl"
+              className="font-display text-[clamp(2.125rem,11vw,3rem)] leading-[0.92] text-white sm:text-6xl"
             />
             <p className="mt-6 max-w-sm text-sm leading-relaxed text-zinc-400">
               One API call evaluates the intent, the simulated execution and the asset. Only an{' '}
@@ -469,7 +469,7 @@ function FlowSection() {
           <Reveal>
             <div className="mb-6 font-mono text-[11px] uppercase tracking-[0.28em] text-zinc-500">02 — Flow</div>
           </Reveal>
-          <LineReveal lines={['From intent', { text: 'to signature.', muted: true }]} className="font-display text-4xl leading-[0.95] text-white sm:text-6xl" />
+          <LineReveal lines={['From intent', { text: 'to signature.', muted: true }]} className="font-display text-[clamp(1.875rem,9.5vw,2.25rem)] leading-[0.95] text-white sm:text-5xl lg:text-6xl" />
           <Reveal delay={0.2}>
             <p className="mt-6 max-w-sm text-sm leading-relaxed text-zinc-400">
               A single guard call sits between the router and the key. Scroll to follow one payload through the pipeline.
@@ -534,7 +534,7 @@ function ZkTeaser({ navigate }: { navigate: Navigate }) {
           <Reveal>
             <div className="mb-6 font-mono text-[11px] uppercase tracking-[0.28em] text-zinc-500">03 — Zero-knowledge layer</div>
           </Reveal>
-          <LineReveal lines={['Prove the match.', { text: 'Keep the intent private.', muted: true }]} className="font-display text-4xl leading-[0.95] text-white sm:text-6xl" />
+          <LineReveal lines={['Prove the match.', { text: 'Keep the intent private.', muted: true }]} className="font-display text-[clamp(1.875rem,9.5vw,2.25rem)] leading-[0.95] text-white sm:text-5xl lg:text-6xl" />
           <Reveal delay={0.2}>
             <p className="mt-6 max-w-md text-sm leading-relaxed text-zinc-400">
               Groth16 is the required proof system for MVP, with Halo2-KZG as the target. The proof covers quote-match only,
@@ -583,21 +583,32 @@ function FlipCard({
     <div
       role="button"
       tabIndex={0}
-      onMouseEnter={() => setFlip(true)}
-      onMouseLeave={() => setFlip(false)}
-      onFocus={() => setFlip(true)}
+      // Hover flips only for a real mouse; on touch a tap fires emulated
+      // mouseenter + focus + click, which used to flip and immediately un-flip.
+      onPointerEnter={(e) => e.pointerType === 'mouse' && setFlip(true)}
+      onPointerLeave={(e) => e.pointerType === 'mouse' && setFlip(false)}
+      onFocus={(e) => e.currentTarget.matches(':focus-visible') && setFlip(true)}
       onBlur={() => setFlip(false)}
-      onClick={() => setFlip((f) => !f)}
+      onClick={(e) => {
+        if ((e.nativeEvent as PointerEvent).pointerType === 'mouse') return;
+        setFlip((f) => !f);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          setFlip((f) => !f);
+        }
+      }}
       className="perspective-1400 group relative h-80 cursor-pointer outline-none"
     >
       <motion.div animate={{ rotateY: flip ? 180 : 0 }} transition={{ duration: 0.8, ease: EASE }} className="preserve-3d relative h-full w-full">
         <div className="backface-hidden absolute inset-0 flex flex-col justify-between rounded-3xl border border-white/10 bg-[#070708] p-7 transition-colors group-hover:border-white/30">
           <div className="flex items-center justify-between">
             <Icon className={`h-6 w-6 ${tone}`} strokeWidth={1.5} />
-            <span className="font-mono text-[10px] text-zinc-600">hover ↺</span>
+            <span className="font-mono text-[10px] text-zinc-600"><span className="[@media(hover:hover)]:hidden">tap ↺</span><span className="hidden [@media(hover:hover)]:inline">hover ↺</span></span>
           </div>
           <div>
-            <div className="font-display text-5xl uppercase tracking-tight text-white">{name}</div>
+            <div className="font-display text-4xl uppercase tracking-tight text-white sm:text-5xl md:text-3xl lg:text-4xl xl:text-5xl">{name}</div>
             <p className="mt-3 font-mono text-[11px] text-zinc-500">{caption}</p>
           </div>
         </div>
@@ -606,7 +617,7 @@ function FlipCard({
           style={{ transform: 'rotateY(180deg)' }}
         >
           <div className="font-mono text-[10px] uppercase tracking-[0.2em]">{name} · verdict</div>
-          <p className="font-display text-xl leading-snug">{back}</p>
+          <p className="font-display text-lg leading-snug sm:text-xl md:text-base lg:text-lg xl:text-xl">{back}</p>
         </div>
       </motion.div>
     </div>
@@ -622,11 +633,11 @@ function Verdicts() {
             <Reveal>
               <div className="mb-6 font-mono text-[11px] uppercase tracking-[0.28em] text-zinc-500">04 — Verdicts</div>
             </Reveal>
-            <LineReveal lines={['Allow, deny, abstain.', { text: 'Never “safe”.', muted: true }]} className="font-display text-4xl leading-[0.95] text-white sm:text-6xl" />
+            <LineReveal lines={['Allow, deny, abstain.', { text: 'Never “safe”.', muted: true }]} className="font-display text-[clamp(1.875rem,9.5vw,2.25rem)] leading-[0.95] text-white sm:text-5xl lg:text-6xl" />
           </div>
           <Reveal delay={0.2} className="lg:col-span-5 lg:self-end">
             <p className="max-w-sm text-sm leading-relaxed text-zinc-400">
-              Hover a card to reveal what the verdict means. Abstain is never permission: the signer refuses by default.
+              Hover or tap a card to reveal what the verdict means. Abstain is never permission: the signer refuses by default.
             </p>
           </Reveal>
         </div>
@@ -694,7 +705,7 @@ function Distribution() {
           <Reveal>
             <div className="mb-6 font-mono text-[11px] uppercase tracking-[0.28em] text-zinc-500">05 — Distribution</div>
           </Reveal>
-          <LineReveal lines={['Default-on,', { text: 'not optional.', muted: true }]} className="font-display text-4xl leading-[0.95] text-white sm:text-6xl" />
+          <LineReveal lines={['Default-on,', { text: 'not optional.', muted: true }]} className="font-display text-[clamp(1.875rem,9.5vw,2.25rem)] leading-[0.95] text-white sm:text-5xl lg:text-6xl" />
         </div>
         <div className="grid gap-5 lg:grid-cols-3">
           {SURFACES.map((s, i) => {
@@ -774,7 +785,7 @@ function FinalCta({ navigate }: { navigate: Navigate }) {
         <Reveal>
           <div className="mb-5 font-mono text-[11px] uppercase tracking-[0.3em] text-zinc-500">Guard Console</div>
         </Reveal>
-        <LineReveal lines={['Agents will sign.', { text: 'Make them check first.', muted: true }]} className="font-display text-4xl leading-[0.95] text-white sm:text-6xl" />
+        <LineReveal lines={['Agents will sign.', { text: 'Make them check first.', muted: true }]} className="font-display text-[clamp(1.875rem,9.5vw,2.25rem)] leading-[0.95] text-white sm:text-5xl lg:text-6xl" />
         <Reveal delay={0.2}>
           <div className="mt-10 flex justify-center">
             <MagneticButton

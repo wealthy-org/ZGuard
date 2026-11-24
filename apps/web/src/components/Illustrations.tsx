@@ -54,7 +54,7 @@ export function SimIllo() {
           />
         ))}
       </svg>
-      <div className="absolute left-4 top-3 font-mono text-[9px] tracking-[0.2em] text-zinc-500">BALANCE Δ · RHC 4663</div>
+      <div className="absolute left-4 top-3 font-mono text-[9px] tracking-[0.2em] text-zinc-500 lg:left-10">BALANCE Δ · RHC 4663</div>
     </div>
   );
 }
