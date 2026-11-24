@@ -1,0 +1,52 @@
+{
+  "_comment": "ZGuard MCP host configurations for Claude Code, Cursor, and OpenClaw (§4.2 Dev Brief). Default chain: Robinhood Chain Testnet (46630); switch ZGUARD_ACTIVE_CHAIN_ID to 4663 for Mainnet.",
+  "claudeCode": {
+    "mcpServers": {
+      "zguard": {
+        "command": "node",
+        "args": ["./packages/mcp/dist/index.js"],
+        "env": {
+          "ZGUARD_API_URL": "http://localhost:8787",
+          "ZGUARD_ACTIVE_CHAIN_ID": "46630",
+          "ZGUARD_API_KEY": "zg_replace_with_tenant_key"
+        }
+      }
+    }
+  },
+  "cursor": {
+    "mcpServers": {
+      "zguard": {
+        "command": "node",
+        "args": ["./packages/mcp/dist/index.js"],
+        "env": {
+          "ZGUARD_API_URL": "http://localhost:8787",
+          "ZGUARD_ACTIVE_CHAIN_ID": "46630",
+          "ZGUARD_API_KEY": "zg_replace_with_tenant_key"
+        }
+      }
+    }
+  },
+  "openclaw": {
+    "mcp": {
+      "servers": {
+        "zguard": {
+          "transport": "stdio",
+          "command": "node",
+          "args": ["./packages/mcp/dist/index.js"],
+          "env": {
+            "ZGUARD_API_URL": "http://localhost:8787",
+            "ZGUARD_ACTIVE_CHAIN_ID": "46630",
+            "ZGUARD_API_KEY": "zg_replace_with_tenant_key"
+          },
+          "tools": [
+            "zguard_guard_tx",
+            "zguard_verify_quote",
+            "zguard_token_risk",
+            "zguard_check_content",
+            "zguard_lookup_token"
+          ]
+        }
+      }
+    }
+  }
+}

@@ -3,13 +3,16 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import {
-  NETWORK_RHC_MAINNET,
+  DEFAULT_ACTIVE_RHC_CHAIN_ID,
   RHC_CANONICAL_ASSETS,
+  RHC_TESTNET_ASSETS,
   X402PaymentRequiredError,
   ZGuardClient,
   aggregateDecision,
   computePayloadHash,
+  getRhcChainProfile,
   guardOffline,
+  parseChainIdFromNetwork,
   scanContent,
   type GuardRequest,
   type GuardResponse,
@@ -18,6 +21,7 @@ import {
 export interface ZGuardMcpOptions {
   apiUrl?: string;
   apiKey?: string;
+  defaultChainId?: number;
   fetchImpl?: typeof fetch;
 }
 
@@ -35,6 +39,11 @@ function formatToolJson(payload: unknown) {
 export function createZGuardMcpServer(opts: ZGuardMcpOptions = {}) {
   const apiKey = opts.apiKey ?? process.env.ZGUARD_API_KEY;
   const apiUrl = opts.apiUrl ?? process.env.ZGUARD_API_URL ?? "http://localhost:8787";
+  const activeChainId =
+    opts.defaultChainId ??
+    Number(process.env.ZGUARD_ACTIVE_CHAIN_ID || DEFAULT_ACTIVE_RHC_CHAIN_ID);
+  const defaultNetwork = `eip155:${activeChainId}`;
+
   const client = new ZGuardClient({
     baseUrl: apiUrl,
     apiKey,
@@ -49,9 +58,9 @@ export function createZGuardMcpServer(opts: ZGuardMcpOptions = {}) {
   // 1. guard_payment: Offline quote-match when no API key or simulate=false; Hosted API when simulate=true + API key
   server.tool(
     "guard_payment",
-    "Verify an x402 payment authorization or EVM payment transaction against the quoted payment on Robinhood Chain (4663). Runs offline without API key unless simulation=true.",
+    "Verify an x402 payment authorization or EVM payment transaction against the quoted payment on Robinhood Chain (Testnet 46630 or Mainnet 4663). Runs offline without API key unless simulate=true.",
     {
-      network: z.string().default(NETWORK_RHC_MAINNET),
+      network: z.string().default(defaultNetwork),
       quote: z.object({
         asset: z.string(),
         payTo: z.string(),
@@ -113,14 +122,14 @@ export function createZGuardMcpServer(opts: ZGuardMcpOptions = {}) {
     }
   );
 
-  // 2. guard_transaction: Simulation + intent/quote parity on RHC 4663
+  // 2. guard_transaction: Simulation + intent/quote parity on RHC (46630 / 4663)
   server.tool(
     "guard_transaction",
-    "Simulate an RHC 4663 swap or general EVM transaction and verify it matches the router intent before signing.",
+    "Simulate an RHC (46630/4663) swap or general EVM transaction and verify it matches the router intent before signing.",
     {
-      network: z.string().default(NETWORK_RHC_MAINNET),
+      network: z.string().default(defaultNetwork),
       intent: z.object({
-        chainId: z.number().default(4663),
+        chainId: z.number().default(activeChainId),
         to: z.string(),
         function: z.string(),
         args: z.array(z.any()).optional(),
@@ -157,13 +166,13 @@ export function createZGuardMcpServer(opts: ZGuardMcpOptions = {}) {
     }
   );
 
-  // 3. check_token: Returns canonical §5.3 GuardResponse schema for RHC 4663 token risk + metadata scan (§9 #6)
+  // 3. check_token: Returns canonical §5.3 GuardResponse schema for RHC token risk + metadata scan (§9 #6)
   server.tool(
     "check_token",
-    "Evaluate Robinhood Chain (4663) token risk (kind: usdg | stock_token | pons_curve | pons_graduated_v4 | other, holders, LP, tax, authorities, pons state) and scan metadata before reading.",
+    "Evaluate Robinhood Chain (46630 / 4663) token risk (kind: usdg | stock_token | pons_curve | pons_graduated_v4 | other, holders, LP, tax, authorities, pons state) and scan metadata before reading.",
     {
       token: z.string(),
-      network: z.string().default(NETWORK_RHC_MAINNET),
+      network: z.string().default(defaultNetwork),
       metadataText: z.string().optional(),
       symbol: z.string().optional(),
       name: z.string().optional(),
@@ -179,19 +188,27 @@ export function createZGuardMcpServer(opts: ZGuardMcpOptions = {}) {
             }
           : undefined;
 
-      // Without API key: resolve local canonical USDG/WETH cache or free GET /v1/token lookup, else fail-closed abstain
+      const chainId = parseChainIdFromNetwork(args.network) ?? activeChainId;
+      const profile = getRhcChainProfile(chainId);
+
+      // Without API key: resolve local canonical USDG/Testnet Stock cache or free GET /v1/token lookup, else fail-closed abstain
       if (!apiKey) {
         const lower = args.token.trim().toLowerCase();
         const contentRes = scanContent(contentInput);
-        if (lower === RHC_CANONICAL_ASSETS.USDG.address.toLowerCase()) {
+        const isCanonicalUsdg =
+          lower === profile.usdgAddress.toLowerCase() ||
+          lower === RHC_CANONICAL_ASSETS.USDG.address.toLowerCase() ||
+          lower === RHC_TESTNET_ASSETS.USDG.address.toLowerCase();
+
+        if (isCanonicalUsdg) {
           const checks: GuardResponse["checks"] = {
             token_risk: {
               decision: "allow",
               codes: [],
-              token: RHC_CANONICAL_ASSETS.USDG.address,
-              name: RHC_CANONICAL_ASSETS.USDG.name,
-              symbol: RHC_CANONICAL_ASSETS.USDG.symbol,
-              decimals: RHC_CANONICAL_ASSETS.USDG.decimals,
+              token: args.token,
+              name: "Global Dollar",
+              symbol: "USDG",
+              decimals: 6,
               kind: "usdg",
               holders: { count: null, top10Bps: null },
               liquidity: { venue: "canonical", locked: null, detail: {} },
@@ -219,9 +236,8 @@ export function createZGuardMcpServer(opts: ZGuardMcpOptions = {}) {
           return formatToolJson(resp);
         }
 
-        // Try free GET /v1/token/4663/{address} cache lookup
         try {
-          const lookup = await client.lookupToken(4663, args.token);
+          const lookup = await client.lookupToken(chainId, args.token);
           if (lookup.observed && lookup.data) {
             return formatToolJson(lookup.data);
           }
@@ -300,9 +316,9 @@ export function createZGuardMcpServer(opts: ZGuardMcpOptions = {}) {
   // 5. guard_bundle: Single call running quote + simulation + token_risk (§4.2 & §9 #6)
   server.tool(
     "guard_bundle",
-    "Execute all three ZGuard checks (quote-match, RHC 4663 simulation, and RHC token risk) in a single POST /v1/guard call before signing.",
+    "Execute all three ZGuard checks (quote-match, RHC simulation, and RHC token risk) in a single POST /v1/guard call before signing.",
     {
-      network: z.string().default(NETWORK_RHC_MAINNET),
+      network: z.string().default(defaultNetwork),
       quote: z
         .object({
           asset: z.string(),
@@ -350,12 +366,12 @@ export function createZGuardMcpServer(opts: ZGuardMcpOptions = {}) {
   return server;
 }
 
-// Run stdio transport when invoked directly as a CLI binary (`npx @zguard/mcp`)
+// Run stdio transport when invoked directly as a CLI binary (`npx @zguard/mcp`, Claude Code, Cursor, etc.)
+const argv1Norm = (process.argv[1] ?? "").replace(/\\/g, "/");
 const isDirectRun =
-  process.argv[1] &&
-  (process.argv[1].endsWith("/mcp/src/index.ts") ||
-    process.argv[1].endsWith("/mcp/dist/index.js") ||
-    process.argv[1].endsWith("zguard-mcp"));
+  argv1Norm.endsWith("/mcp/src/index.ts") ||
+  argv1Norm.endsWith("/mcp/dist/index.js") ||
+  argv1Norm.endsWith("zguard-mcp");
 
 if (isDirectRun) {
   const srv = createZGuardMcpServer();

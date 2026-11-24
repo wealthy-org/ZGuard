@@ -13,11 +13,16 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "compile:sol": "node scripts/compile-solidity.mjs",
+    "build": "node scripts/compile-solidity.mjs && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "deploy": "tsx src/deploy-verifier.ts"
   },
   "dependencies": {
     "@zguard/sdk": "workspace:*",
     "viem": "^2.30.0"
+  },
+  "devDependencies": {
+    "solc": "0.8.28"
   }
 }

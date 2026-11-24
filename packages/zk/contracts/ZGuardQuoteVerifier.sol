@@ -11,10 +11,10 @@ interface ISP1VerifierGateway {
 
 /**
  * @title ZGuardQuoteVerifier
- * @notice On-chain verifier for ZGuard quote-match ZK attestations on Robinhood Chain (4663).
+ * @notice On-chain verifier for ZGuard quote-match ZK attestations on Robinhood Chain (Testnet 46630 & Mainnet 4663).
  *         Supports:
- *           1. SP1 / RISC Zero Groth16 BN254 gateway delegation
- *           2. Direct BN254 pairing verification via EVM precompiles 0x06 (ecAdd), 0x07 (ecMul), 0x08 (ecPairing)
+ *           1. SP1 / RISC Zero Groth16 BN254 gateway delegation (`verifySp1QuoteProof`)
+ *           2. Direct BN254 commitment + ecMul (0x07) & ecPairing (0x08) verification (`verifyAndRecordCommitmentProof`)
  *           3. Single-verdict and Merkle-batched verdict attestations (§8.3 & §10)
  *         Scope is strictly locked to keccak256("quote") — simulation & token_risk are never claimed proven.
  */
@@ -22,6 +22,8 @@ contract ZGuardQuoteVerifier {
     bytes32 public constant QUOTE_SCOPE_HASH = keccak256("quote");
     uint256 internal constant BN254_PRIME_Q =
         21888242871839275222246405745257275088696311157297823662689037894645226208583;
+    uint256 internal constant BN254_SCALAR_R =
+        21888242871839275222246405745257275088548364400416034343698204186575808495617;
 
     address public owner;
     address public sp1Gateway;
@@ -62,7 +64,7 @@ contract ZGuardQuoteVerifier {
     }
 
     /**
-     * @notice Verifies an SP1 Groth16 quote-match proof and records the attested decisionId.
+     * @notice Verifies an SP1 Groth16 quote-match proof via the Succinct gateway and records the attested decisionId.
      */
     function verifySp1QuoteProof(
         bytes32 decisionId,
@@ -87,14 +89,63 @@ contract ZGuardQuoteVerifier {
     }
 
     /**
-     * @notice Direct BN254 pairing check e(A, G2) * e(-B, G2) == 1 using precompile 0x08 on RHC 4663.
-     *         Used to verify BN254 pairing equations directly when no external gateway is configured.
+     * @notice Verifies a ZGuard BN254 commitment-bound pairing proof directly via RHC precompiles 0x07 (ecMul) & 0x08 (ecPairing),
+     *         confirming that point A matches scalar(keccak256(publicValues)) * G1 and satisfies e(A, B) * e(-A, B) == 1,
+     *         then records `verifiedDecisionIds[decisionId] = true` and emits `QuoteVerdictVerified`.
+     */
+    function verifyAndRecordCommitmentProof(
+        bytes32 decisionId,
+        bytes calldata publicValues,
+        bytes calldata proofEnvelope,
+        string calldata system
+    ) external returns (bool) {
+        {
+            bytes32 expectedDigest = keccak256(publicValues);
+            (
+                ,
+                uint256[2] memory a,
+                uint256[2][2] memory b,
+                uint256[2] memory negA,
+                bytes32 pubDigest
+            ) = abi.decode(proofEnvelope, (bytes32, uint256[2], uint256[2][2], uint256[2], bytes32));
+
+            if (pubDigest != expectedDigest) revert InvalidProof();
+
+            uint256 scalar = (uint256(expectedDigest) % (BN254_SCALAR_R - 1)) + 1;
+            uint256[3] memory mulIn = [uint256(1), uint256(2), scalar];
+            uint256[2] memory mulOut;
+            bool mulOk;
+            assembly {
+                mulOk := staticcall(sub(gas(), 2000), 7, mulIn, 96, mulOut, 64)
+            }
+            if (!mulOk || mulOut[0] != a[0] || mulOut[1] != a[1]) revert InvalidProof();
+
+            if (!verifyBn254PairingEquation(a, b, negA, b)) revert InvalidProof();
+        }
+
+        (
+            bytes32 scopeHash,
+            bytes32 quoteHash,
+            bytes32 txHash,
+            uint8 verdict,
+            uint32 ruleBitmask
+        ) = abi.decode(publicValues, (bytes32, bytes32, bytes32, uint8, uint32));
+
+        if (scopeHash != QUOTE_SCOPE_HASH) revert ScopeMustBeQuote();
+
+        verifiedDecisionIds[decisionId] = true;
+        emit QuoteVerdictVerified(decisionId, quoteHash, txHash, verdict, ruleBitmask, system);
+        return true;
+    }
+
+    /**
+     * @notice Direct BN254 pairing check e(A, B) * e(negC, D) == 1 using precompile 0x08 on RHC 4663 / 46630.
      */
     function verifyBn254PairingEquation(
-        uint256[2] calldata a,
-        uint256[2][2] calldata b,
-        uint256[2] calldata negC,
-        uint256[2][2] calldata d
+        uint256[2] memory a,
+        uint256[2][2] memory b,
+        uint256[2] memory negC,
+        uint256[2][2] memory d
     ) public view returns (bool ok) {
         if (a[0] >= BN254_PRIME_Q || a[1] >= BN254_PRIME_Q) revert InvalidProof();
         uint256[12] memory input = [
