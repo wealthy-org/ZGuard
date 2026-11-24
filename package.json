@@ -7,8 +7,8 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "dev": "pnpm --parallel --filter @zguard/api --filter @zguard/web dev",
-    "dev:api": "pnpm --filter @zguard/api dev",
+    "dev": "pnpm --filter @zguard/sdk build && pnpm --filter @zguard/zk build && pnpm --parallel --filter @zguard/api --filter @zguard/web dev",
+    "dev:api": "pnpm --filter @zguard/sdk build && pnpm --filter @zguard/zk build && pnpm --filter @zguard/api dev",
     "dev:web": "pnpm --filter @zguard/web dev",
     "build": "pnpm --filter @zguard/sdk build && pnpm --filter @zguard/zk build && pnpm --filter @zguard/mcp build && pnpm --filter @zguard/api build && pnpm --filter @zguard/web build",
     "typecheck": "pnpm -r typecheck",
