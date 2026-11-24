@@ -1,0 +1,26 @@
+{
+  "name": "@zguard/sdk",
+  "version": "0.1.0",
+  "description": "ZGuard TypeScript SDK, offline quote-match engine, EVM signer wrapper, and CLI for Robinhood Chain (4663)",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "zguard": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "viem": "^2.30.0",
+    "zod": "^3.25.0"
+  }
+}
