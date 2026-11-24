@@ -1,0 +1,152 @@
+import { useState } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
+import { ArrowUpRight, Menu, X } from 'lucide-react';
+import { ZGuardLogo } from './ZGuardLogo';
+import { XLogo } from './XLogo';
+import { NAV_ROUTES, ROUTES, X_URL, type Navigate, type RouteId } from '../types';
+
+interface NavbarProps {
+  route: RouteId;
+  navigate: Navigate;
+}
+
+export function Navbar({ route, navigate }: NavbarProps) {
+  const [open, setOpen] = useState(false);
+  const go = (id: RouteId) => {
+    setOpen(false);
+    navigate(id);
+  };
+
+  return (
+    <motion.header
+      initial={{ y: -40, opacity: 0 }}
+      animate={{ y: 0, opacity: 1 }}
+      transition={{ duration: 0.8, delay: 0.1, ease: [0.22, 1, 0.36, 1] }}
+      className="fixed inset-x-0 top-0 z-40"
+    >
+      <div className="mx-auto max-w-7xl px-4 pt-4 sm:px-6 lg:px-8">
+        <div className="flex items-center justify-between gap-3 rounded-full border border-white/12 bg-black/60 py-2 pl-2 pr-2 shadow-[0_12px_50px_rgba(0,0,0,0.6)] backdrop-blur-2xl">
+          <a
+            href="#/"
+            onClick={(e) => {
+              e.preventDefault();
+              go('home');
+            }}
+            className="group flex items-center gap-2.5 pl-1"
+          >
+            <div className="flex h-9 w-9 items-center justify-center rounded-full border border-white/20 bg-black transition group-hover:border-white/70">
+              <ZGuardLogo size={26} animated />
+            </div>
+            <div className="leading-none">
+              <div className="font-display text-[13px] text-white">ZGUARD</div>
+              <div className="mt-1 font-mono text-[9px] uppercase tracking-[0.18em] text-zinc-500">RHC · 4663</div>
+            </div>
+          </a>
+
+          <nav className="hidden items-center gap-0.5 xl:flex">
+            {NAV_ROUTES.map((r) => {
+              const active = r.id === route;
+              return (
+                <a
+                  key={r.id}
+                  href={`#${r.path}`}
+                  title={r.hint}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    go(r.id);
+                  }}
+                  className={`relative rounded-full px-3 py-1.5 font-mono text-[11px] tracking-wide transition-colors ${
+                    active ? 'text-black' : 'text-zinc-400 hover:text-white'
+                  }`}
+                >
+                  {active && (
+                    <motion.span
+                      layoutId="nav-pill"
+                      className="absolute inset-0 rounded-full bg-white"
+                      transition={{ type: 'spring', stiffness: 420, damping: 34 }}
+                    />
+                  )}
+                  <span className="relative">{r.label}</span>
+                </a>
+              );
+            })}
+          </nav>
+
+          <div className="flex items-center gap-2">
+            <a
+              href={X_URL}
+              target="_blank"
+              rel="noreferrer"
+              aria-label="ZGuard on X"
+              className="flex h-9 w-9 items-center justify-center rounded-full border border-white/15 text-zinc-300 transition hover:rotate-12 hover:border-white/60 hover:text-white"
+            >
+              <XLogo size={14} />
+            </a>
+            <a
+              href="#/docs"
+              onClick={(e) => {
+                e.preventDefault();
+                go('docs');
+              }}
+              className={`hidden items-center gap-1.5 rounded-full border px-4 py-2 font-mono text-[11px] transition sm:inline-flex ${
+                route === 'docs'
+                  ? 'border-white bg-white text-black font-bold'
+                  : 'border-white/20 text-zinc-300 hover:border-white/60 hover:text-white'
+              }`}
+            >
+              Docs
+            </a>
+            <button
+              type="button"
+              onClick={() => go('console')}
+              className="hidden items-center gap-1.5 rounded-full bg-white px-4 py-2 font-mono text-[11px] font-bold text-black transition hover:bg-zinc-200 sm:inline-flex"
+            >
+              Open Console
+              <ArrowUpRight className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setOpen((v) => !v)}
+              aria-label="Toggle menu"
+              className="flex h-9 w-9 items-center justify-center rounded-full border border-white/15 text-white xl:hidden"
+            >
+              {open ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.3 }}
+            className="mx-4 mt-2 space-y-1 rounded-3xl border border-white/12 bg-black/90 p-3 backdrop-blur-xl xl:hidden"
+          >
+            {ROUTES.filter((r) => r.id !== 'home').map((r, i) => (
+              <motion.a
+                key={r.id}
+                href={`#${r.path}`}
+                initial={{ opacity: 0, x: -12 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: i * 0.04 }}
+                onClick={(e) => {
+                  e.preventDefault();
+                  go(r.id);
+                }}
+                className={`flex items-center justify-between rounded-2xl px-4 py-3 font-mono text-xs ${
+                  r.id === route ? 'bg-white text-black' : 'text-zinc-300 hover:bg-white/8 hover:text-white'
+                }`}
+              >
+                <span>{r.label}</span>
+                <span className="text-[10px] opacity-60">{r.hint}</span>
+              </motion.a>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.header>
+  );
+}
