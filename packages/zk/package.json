@@ -1,0 +1,23 @@
+{
+  "name": "@zguard/zk",
+  "version": "0.1.0",
+  "description": "ZGuard ZK attestation layer (Groth16 BN254 + Halo2-KZG commitments, async prover, and RHC 4663 ecPairing verifier)",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@zguard/sdk": "workspace:*",
+    "viem": "^2.30.0"
+  }
+}
