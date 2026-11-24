@@ -1,5 +1,13 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "../index.css";
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: "#000000",
+  colorScheme: "dark",
+};
 
 export const metadata: Metadata = {
   title: "ZGuard — Scanner & Guard Layer on Robinhood Chain (4663 / Testnet 46630)",

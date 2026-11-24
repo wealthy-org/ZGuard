@@ -51,6 +51,54 @@
     background: #fff;
     color: #000;
   }
+
+  /* ---------- responsive safety net ----------
+     A bare `grid` (e.g. `grid lg:grid-cols-12`) has an implicit `auto` column
+     on mobile, which grows to its widest child — a scrollable chip row or a
+     `min-w-[520px]` table — and pushes the whole column off-screen where the
+     root `overflow-x-clip` silently cuts it. Default every grid to a single
+     column that can never exceed its container; any `*:grid-cols-*` utility
+     still wins because utilities sit in a higher cascade layer than base. */
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .grid > * {
+    min-width: 0;
+  }
+
+  /* Media never wider than its container */
+  img,
+  svg,
+  video,
+  canvas {
+    max-width: 100%;
+  }
+
+  /* Long hashes / addresses / URLs wrap instead of blowing out the layout */
+  p,
+  li,
+  dd,
+  h1,
+  h2,
+  h3,
+  h4 {
+    overflow-wrap: break-word;
+  }
+
+  /* Stop iOS from auto-inflating text when rotating to landscape */
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  /* iOS zooms the page when focusing an input with font-size < 16px */
+  @media (max-width: 767px) and (pointer: coarse) {
+    input,
+    textarea,
+    select {
+      font-size: 16px !important;
+    }
+  }
 }
 
 @media (pointer: fine) {
