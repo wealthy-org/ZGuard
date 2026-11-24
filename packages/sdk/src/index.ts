@@ -7,3 +7,4 @@ export * from "./quote-match.js";
 export * from "./decision.js";
 export * from "./signer.js";
 export * from "./client.js";
+export * from "./integrations.js";

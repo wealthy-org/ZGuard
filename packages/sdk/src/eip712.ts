@@ -7,7 +7,13 @@ import {
   type Hex,
   type PublicClient,
 } from "viem";
-import { RHC_CANONICAL_ASSETS, RHC_MAINNET_CHAIN_ID } from "./constants.js";
+import {
+  BASE_USDC_ASSETS,
+  RHC_CANONICAL_ASSETS,
+  RHC_MAINNET_CHAIN_ID,
+  RHC_TESTNET_ASSETS,
+  RHC_TESTNET_CHAIN_ID,
+} from "./constants.js";
 import type { Eip3009Authorization } from "./types.js";
 
 export interface VerifiedEip712Domain {
@@ -43,6 +49,20 @@ domainRegistry.set(
     name: RHC_CANONICAL_ASSETS.USDG.eip712Domain.name,
     version: RHC_CANONICAL_ASSETS.USDG.eip712Domain.version,
     domainSeparator: RHC_CANONICAL_ASSETS.USDG.eip712Domain.domainSeparator,
+    supportsEip3009: true,
+    verifiedAt: 0,
+  }
+);
+
+// Seed with USDG on RHC 46630 Testnet verified directly from live contract 0x7E955252E15c84f5768B83c41a71F9eba181802F
+domainRegistry.set(
+  domainKey(RHC_TESTNET_CHAIN_ID, RHC_TESTNET_ASSETS.USDG.address),
+  {
+    chainId: RHC_TESTNET_CHAIN_ID,
+    verifyingContract: RHC_TESTNET_ASSETS.USDG.address,
+    name: RHC_TESTNET_ASSETS.USDG.eip712Domain.name,
+    version: RHC_TESTNET_ASSETS.USDG.eip712Domain.version,
+    domainSeparator: RHC_TESTNET_ASSETS.USDG.eip712Domain.domainSeparator,
     supportsEip3009: true,
     verifiedAt: 0,
   }

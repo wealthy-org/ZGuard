@@ -1,3 +1,4 @@
+import { NETWORK_RHC_TESTNET } from "./constants.js";
 import { aggregateDecision } from "./decision.js";
 import { scanContent } from "./content-scan.js";
 import { computePayloadHash } from "./hash.js";
@@ -187,7 +188,8 @@ export class ZGuardClient {
     creditMicroUsdg: string;
     totalSpentMicroUsdg: string;
     asset: "USDG";
-    network: "eip155:4663";
+    network: string;
+    chainId?: number;
   }> {
     return this.requestJson("GET", "/v1/balance");
   }
@@ -229,7 +231,7 @@ export class ZGuardClient {
 
   public async tokenRisk(
     token: string,
-    network = "eip155:4663",
+    network: string = NETWORK_RHC_TESTNET,
     paymentHeader?: string
   ): Promise<{ decision: string; token_risk: TokenRiskCheckResult }> {
     return this.requestJson("POST", "/v1/token-risk", { network, token }, paymentHeader);

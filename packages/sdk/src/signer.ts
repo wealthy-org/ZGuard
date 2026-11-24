@@ -1,3 +1,4 @@
+import { NETWORK_RHC_TESTNET } from "./constants.js";
 import { computePayloadHash } from "./hash.js";
 import type {
   EvmCallObject,
@@ -158,7 +159,7 @@ export function verifyReceiptForSigning(
  * without a hash-bound, non-expired `allow` verdict (§4.4 & §9 #2/#5/#8).
  */
 export function guardEvmSigner<T extends EvmSignerLike>(signer: T, config: GuardSignerConfig = {}) {
-  const network = config.network ?? "eip155:4663";
+  const defaultNetwork = config.network ?? NETWORK_RHC_TESTNET;
   const surface = config.surfaceName ?? "guardEvmSigner";
   const evalFn = config.evaluate ?? config.guardFn;
 
@@ -172,6 +173,14 @@ export function guardEvmSigner<T extends EvmSignerLike>(signer: T, config: Guard
 
     const effectiveQuote = ctx?.quote ?? config.contextQuote;
     const effectiveIntent = ctx?.intent ?? config.contextIntent ?? payload.intent;
+    const inferredChainId =
+      effectiveIntent?.chainId ??
+      effectiveQuote?.chainId ??
+      payload.authorization?.domain?.chainId;
+    const network =
+      config.network ??
+      effectiveQuote?.network ??
+      (inferredChainId ? `eip155:${inferredChainId}` : defaultNetwork);
 
     if (!effectiveQuote && !effectiveIntent) {
       const h = computePayloadHash({ network, payload });

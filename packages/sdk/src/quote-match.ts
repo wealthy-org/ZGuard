@@ -7,7 +7,7 @@ import {
   type Abi,
   type Hex,
 } from "viem";
-import { RHC_MAINNET_CHAIN_ID } from "./constants.js";
+import { RHC_TESTNET_CHAIN_ID } from "./constants.js";
 import { scanContent } from "./content-scan.js";
 import { computeEip712DomainSeparator, getVerifiedEip712Domain } from "./eip712.js";
 import type {
@@ -49,6 +49,10 @@ export function parseChainIdFromNetwork(network: string): number | null {
   const m = network.trim().match(/^eip155:(\d+)$/);
   if (!m) return null;
   return Number(m[1]);
+}
+
+export function isSolanaNetwork(network: string): boolean {
+  return network.trim().toLowerCase().startsWith("solana:");
 }
 
 function normAddr(addr?: string | null): string {
@@ -253,14 +257,16 @@ export function evaluateQuoteMatch(ctx: QuoteMatchContext): QuoteCheckResult {
   const codes: ReasonCode[] = [];
   const notes: string[] = [];
 
+  const solanaMode = isSolanaNetwork(ctx.network);
   const networkChainId = parseChainIdFromNetwork(ctx.network);
-  if (networkChainId === null) {
+
+  if (networkChainId === null && !solanaMode) {
     return {
       decision: "abstain",
       codes: ["Q-004"],
       expected: null,
       actual: null,
-      notes: [`Unsupported or non-EVM network identifier: ${ctx.network}`],
+      notes: [`Unsupported network identifier: ${ctx.network}`],
     };
   }
 
@@ -288,7 +294,7 @@ export function evaluateQuoteMatch(ctx: QuoteMatchContext): QuoteCheckResult {
             payTo: quote.payTo,
             asset: quote.asset,
             amount: quote.amount,
-            chainId: quote.chainId ?? networkChainId,
+            chainId: quote.chainId ?? networkChainId ?? 0,
           }
         : null,
       actual: null,
@@ -307,7 +313,116 @@ export function evaluateQuoteMatch(ctx: QuoteMatchContext): QuoteCheckResult {
     }
   }
 
-  // Case 1: EIP-3009 Authorization (x402 payment rail, e.g., USDG on 4663)
+  // Optional Solana SPL USDC payment rail (§2.1: SPL transfer only for (recipient, mint); deny SetAuthority/Approve)
+  if (solanaMode || payload.type === "solana_spl") {
+    if (!solanaMode) {
+      return {
+        decision: "deny",
+        codes: ["Q-004"],
+        expected: null,
+        actual: null,
+        notes: [`Solana SPL payload submitted on non-Solana network ${ctx.network}`],
+      };
+    }
+    if (!quote) {
+      return {
+        decision: "deny",
+        codes: ["Q-005"],
+        expected: null,
+        actual: null,
+        notes: ["Solana SPL transfer verification requires an x402 quote"],
+      };
+    }
+    const spl = payload.solanaTransfer;
+    const expected = {
+      payTo: quote.payTo,
+      asset: quote.asset,
+      amount: quote.amount,
+      chainId: 0,
+    };
+    if (!spl || !spl.recipient || !spl.mint || parseBigIntSafe(spl.amount) === null) {
+      return {
+        decision: "abstain",
+        codes: ["Q-DECODE"],
+        expected,
+        actual: null,
+        notes: ["Malformed Solana SPL transfer payload"],
+      };
+    }
+    const actualAmount = parseBigIntSafe(spl.amount)!;
+    const expectedAmount = parseBigIntSafe(quote.amount);
+    const actual = {
+      payTo: spl.recipient,
+      asset: spl.mint,
+      amount: spl.amount,
+      chainId: 0,
+    };
+    if (expectedAmount === null) {
+      return {
+        decision: "abstain",
+        codes: ["Q-DECODE"],
+        expected,
+        actual,
+        notes: ["Invalid numeric amount in quote"],
+      };
+    }
+
+    if (spl.hasApproveOrSetAuthority) {
+      codes.push("Q-006");
+      notes.push("Solana SPL SetAuthority / Approve instruction detected and denied (§2.1)");
+    }
+    const instructions = spl.instructions ?? [];
+    for (const ix of instructions) {
+      const lowerIx = ix.toLowerCase();
+      if (lowerIx.includes("approve") || lowerIx.includes("setauthority")) {
+        if (!codes.includes("Q-006")) codes.push("Q-006");
+        notes.push(`Solana instruction "${ix}" grants delegate/authority outside one-shot transfer`);
+      }
+    }
+
+    // Solana base58 addresses are case-sensitive!
+    if (spl.recipient.trim() !== quote.payTo.trim()) {
+      codes.push("Q-001");
+      notes.push(`Solana recipient mismatch: expected ${quote.payTo}, got ${spl.recipient}`);
+    }
+    if (actualAmount !== expectedAmount) {
+      codes.push("Q-002");
+      notes.push(`Solana SPL amount mismatch: expected ${expectedAmount.toString()}, got ${actualAmount.toString()}`);
+    }
+    if (spl.mint.trim() !== quote.asset.trim()) {
+      codes.push("Q-003");
+      notes.push(`Solana SPL mint mismatch: expected ${quote.asset}, got ${spl.mint}`);
+    }
+
+    const policyRes = evaluateSpendPolicy(
+      ctx.spendPolicy,
+      spl.recipient,
+      spl.mint,
+      actualAmount,
+      ctx.lifetimeSpendLookup,
+      ctx.policyStoreUnavailable
+    );
+    if (!policyRes.ok) {
+      codes.push(policyRes.code);
+      notes.push(policyRes.note);
+      if (policyRes.decision === "abstain" && codes.length === 1) {
+        return { decision: "abstain", codes, expected, actual, notes };
+      }
+    }
+
+    return {
+      decision: codes.length > 0 ? "deny" : "allow",
+      codes,
+      expected,
+      actual,
+      notes:
+        codes.length === 0
+          ? [...notes, `Verified Solana SPL one-shot transfer for (${spl.recipient}, ${spl.mint})`]
+          : notes,
+    };
+  }
+
+  // Case 1: EIP-3009 Authorization (x402 payment rail, e.g., USDG on 46630/4663 or USDC on 8453/84532)
   if (payload.type === "eip3009") {
     if (!quote) {
       return {
@@ -333,15 +448,15 @@ export function evaluateQuoteMatch(ctx: QuoteMatchContext): QuoteCheckResult {
           payTo: quote.payTo,
           asset: quote.asset,
           amount: quote.amount,
-          chainId: quote.chainId ?? networkChainId,
+          chainId: quote.chainId ?? networkChainId!,
         },
         actual: null,
         notes: ["Malformed EIP-3009 authorization fields"],
       };
     }
 
-    const expectedChainId = quote.chainId ?? networkChainId;
-    const actualChainId = auth.domain?.chainId ?? networkChainId;
+    const expectedChainId = quote.chainId ?? networkChainId!;
+    const actualChainId = auth.domain?.chainId ?? networkChainId!;
     const actualAsset = auth.domain?.verifyingContract ?? quote.asset;
     const expectedAmount = parseBigIntSafe(quote.amount);
     const actualAmount = parseBigIntSafe(auth.value)!;
@@ -552,7 +667,6 @@ export function evaluateQuoteMatch(ctx: QuoteMatchContext): QuoteCheckResult {
           };
         }
       } else if (!reencoded && txObj.data && txObj.data !== "0x") {
-        // Cannot re-encode unknown custom function without ABI -> check selector or abstain if undecodable
         if (!/^0x([0-9a-fA-F]{2}){4,}$/.test(txObj.data)) {
           return {
             decision: "abstain",
@@ -591,7 +705,7 @@ export function evaluateQuoteMatch(ctx: QuoteMatchContext): QuoteCheckResult {
       codes: [],
       expected,
       actual: expected,
-      notes: [...notes, `Router intent verified for chain ${intent.chainId || RHC_MAINNET_CHAIN_ID}`],
+      notes: [...notes, `Router intent verified for chain ${intent.chainId || RHC_TESTNET_CHAIN_ID}`],
     };
   }
 
@@ -607,7 +721,7 @@ export function evaluateQuoteMatch(ctx: QuoteMatchContext): QuoteCheckResult {
       };
     }
 
-    const expectedChainId = quote.chainId ?? networkChainId;
+    const expectedChainId = quote.chainId ?? networkChainId!;
     const expected = {
       payTo: quote.payTo,
       asset: quote.asset,
@@ -638,7 +752,7 @@ export function evaluateQuoteMatch(ctx: QuoteMatchContext): QuoteCheckResult {
 
     const data = (txObj.data ?? "0x") as Hex;
     const txVal = parseBigIntSafe(txObj.value ?? "0") ?? 0n;
-    const txChain = txObj.chainId ?? networkChainId;
+    const txChain = txObj.chainId ?? networkChainId!;
 
     // Native ETH payment if data === "0x"
     if (data === "0x") {

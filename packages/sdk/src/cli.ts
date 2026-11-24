@@ -1,19 +1,20 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
 import { ZGuardClient, guardOffline } from "./client.js";
+import { NETWORK_RHC_TESTNET } from "./constants.js";
 import { scanContent } from "./content-scan.js";
 import type { GuardRequest } from "./types.js";
 
 function printHelp(): void {
-  console.log(`ZGuard CLI — Scanner & Guard Layer for Robinhood Chain (4663)
+  console.log(`ZGuard CLI — Scanner & Guard Layer for Robinhood Chain (Testnet 46630 / Mainnet 4663)
 
 Usage:
-  zguard verify <request.json>       Run offline quote-match locally (no API key, no RPC)
-  zguard check-text "<text>"         Scan untrusted text/metadata with shape & Unicode rules
-  zguard guard <request.json>        Call POST /v1/guard on ZGUARD_API_URL
-  zguard token-risk <0xAddress>      Call POST /v1/token-risk on chain 4663
-  zguard register                    Create tenant API key via POST /v1/register
-  zguard balance                     Check remaining USDG micro-credit via GET /v1/balance
+  zguard verify <request.json>                  Run offline quote-match locally (no API key, no RPC)
+  zguard check-text "<text>"                    Scan untrusted text/metadata with shape & Unicode rules
+  zguard guard <request.json>                   Call POST /v1/guard on ZGUARD_API_URL
+  zguard token-risk <0xAddress> [network]       Call POST /v1/token-risk (default: eip155:46630)
+  zguard register                               Create tenant API key via POST /v1/register
+  zguard balance                                Check remaining USDG micro-credit via GET /v1/balance
 `);
 }
 
@@ -27,7 +28,7 @@ function parseJsonArg(arg: string): GuardRequest {
 }
 
 async function main(): Promise<void> {
-  const [, , cmd, arg] = process.argv;
+  const [, , cmd, arg, extra] = process.argv;
   if (!cmd || cmd === "--help" || cmd === "-h") {
     printHelp();
     process.exit(0);
@@ -72,7 +73,8 @@ async function main(): Promise<void> {
 
   if (cmd === "token-risk") {
     if (!arg) throw new Error("Missing <0xAddress>");
-    const out = await client.tokenRisk(arg);
+    const network = extra || process.env.ZGUARD_NETWORK || NETWORK_RHC_TESTNET;
+    const out = await client.tokenRisk(arg, network);
     console.log(JSON.stringify(out, null, 2));
     return;
   }

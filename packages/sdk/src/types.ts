@@ -4,7 +4,7 @@ export type CheckName = "quote" | "simulation" | "token_risk" | "content";
 
 export type CheckMode = "required" | "advisory";
 
-export type ContentVerdict = "clean_by_rules" | "findings" | "unchecked";
+export type ContentVerdict = "clean_by_rules" | "findings" | "unchecked" | "blocked";
 
 export type TokenKind =
   | "stock_token"
@@ -29,6 +29,7 @@ export type ReasonCode =
   | "S-DIFF" // simulated balance changes do not match quote/intent
   | "S-APPROVE" // allowance/operator surfaced outside intent
   | "S-FAIL" // simulation infrastructure/RPC failure -> abstain
+  | "S-SEQUENCER" // L2 sequencer downtime / staleness -> abstain
   | "T-MINT" // mint authority live on non-allowlisted token
   | "T-TAX" // tax / snipe tax above configured threshold
   | "T-LP" // liquidity unlocked or undetected
@@ -36,6 +37,7 @@ export type ReasonCode =
   | "T-PONS" // pons curve state inconsistent / swept / near graduation
   | "T-UNKNOWN" // token kind / address unresolved -> abstain or flag
   | "C-FINDING" // content rules matched prompt-injection / invisible char / ticker lookalike
+  | "C-SSRF" // SSRF-protected URL scan blocked internal/loopback/metadata host
   | "P-401" // outside spendPolicy (cap, payee allowlist, asset allowlist, lifetime spend)
   | "P-UNAVAIL"; // policy or storage store unavailable -> abstain
 
@@ -99,12 +101,22 @@ export interface EvmCallObject {
   gas?: string;
 }
 
+export interface SolanaSplTransfer {
+  recipient: string;
+  mint: string;
+  amount: string;
+  instruction?: string;
+  instructions?: string[];
+  hasApproveOrSetAuthority?: boolean;
+}
+
 export interface GuardPayload {
-  type: "eip3009" | "evm_tx" | "intent";
+  type: "eip3009" | "evm_tx" | "intent" | "solana_spl";
   authorization?: Eip3009Authorization;
   /** Raw signed RLP hex tx OR call hex / EvmCallObject */
   tx?: string | EvmCallObject;
   intent?: RouterIntent;
+  solanaTransfer?: SolanaSplTransfer;
 }
 
 export interface SpendPolicy {
@@ -244,7 +256,14 @@ export interface TokenRiskCheckResult {
     priceUsd: string | null;
     updatedAt: number | null;
     stale: boolean | null;
+    oraclePaused?: boolean | null;
     uiMultiplier?: string | null;
+  };
+  sequencer?: {
+    up: boolean;
+    gracePeriodPassed: boolean;
+    latestBlockAgeSeconds: number | null;
+    source: string;
   };
   metadataScan?: ContentCheckResult;
 }
@@ -260,6 +279,14 @@ export interface ContentCheckResult {
   verdict: ContentVerdict;
   codes: ReasonCode[];
   findings?: ContentFinding[];
+  urlFetch?: {
+    url: string;
+    fetched: boolean;
+    httpStatus?: number | null;
+    blockedReason?: string | null;
+    bytesRead?: number;
+    waivedCharge?: boolean;
+  };
 }
 
 export type ZkSystemId = "groth16-sp1" | "groth16-risc0" | "halo2-kzg";
@@ -283,6 +310,7 @@ export interface ZkAttestation {
   verifierAddress: string | null;
   verifyTx: string | null;
   bn254PrecompileVerified?: boolean;
+  verifierGasUsed?: string | null;
   status: "pending" | "proven" | "verified" | "failed";
   createdAt?: string;
   updatedAt?: string;
@@ -293,6 +321,7 @@ export interface ChargedInfo {
   amount: string;
   unit: "micro";
   rail?: string;
+  settlementTxHash?: string | null;
 }
 
 export interface GuardResponse {
