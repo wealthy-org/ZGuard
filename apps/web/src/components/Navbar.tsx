@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ArrowUpRight, Menu, X } from 'lucide-react';
 import { ZGuardLogo } from './ZGuardLogo';
 import { XLogo } from './XLogo';
 import { NAV_ROUTES, ROUTES, X_URL, type Navigate, type RouteId } from '../types';
+import { fetchRuntimeConfig } from '../lib/zguard-api';
 
 interface NavbarProps {
   route: RouteId;
@@ -12,6 +13,21 @@ interface NavbarProps {
 
 export function Navbar({ route, navigate }: NavbarProps) {
   const [open, setOpen] = useState(false);
+  const [chainBadge, setChainBadge] = useState<{ chainId: number; isTestnet: boolean }>({
+    chainId: 46630,
+    isTestnet: true,
+  });
+
+  useEffect(() => {
+    fetchRuntimeConfig()
+      .then((cfg) => {
+        if (cfg && cfg.chainId) {
+          setChainBadge({ chainId: cfg.chainId, isTestnet: cfg.isTestnet });
+        }
+      })
+      .catch(() => undefined);
+  }, []);
+
   const go = (id: RouteId) => {
     setOpen(false);
     navigate(id);
@@ -39,7 +55,16 @@ export function Navbar({ route, navigate }: NavbarProps) {
             </div>
             <div className="leading-none">
               <div className="font-display text-[13px] text-white">ZGUARD</div>
-              <div className="mt-1 font-mono text-[9px] uppercase tracking-[0.18em] text-zinc-500">RHC · 4663</div>
+              <div className="mt-1 flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-[0.16em] text-zinc-400">
+                <span
+                  className={`h-1.5 w-1.5 rounded-full ${
+                    chainBadge.isTestnet ? 'bg-emerald-400' : 'bg-sky-400'
+                  }`}
+                />
+                <span>
+                  RHC · {chainBadge.chainId} {chainBadge.isTestnet ? 'TESTNET' : 'MAINNET'}
+                </span>
+              </div>
             </div>
           </a>
 
