@@ -15,6 +15,7 @@
     "test": "pnpm --filter @zguard/api test",
     "db:generate": "pnpm --filter @zguard/api db:generate",
     "db:push": "pnpm --filter @zguard/api db:push",
+    "deploy:verifier": "pnpm --filter @zguard/zk deploy",
     "mcp": "pnpm --filter @zguard/mcp start"
   },
   "devDependencies": {
