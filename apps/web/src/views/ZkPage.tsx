@@ -8,8 +8,13 @@ import { pollZkAttestation, postLiveVerify } from '../lib/zguard-api';
 
 type System = 'groth16' | 'halo2';
 type Fixture = 'allow' | 'deny';
+type ActiveChain = 46630 | 4663;
 
-const USDG_ADDR = '0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168';
+const TESTNET_USDG = '0x7E955252E15c84f5768B83c41a71F9eba181802F';
+const TESTNET_HOLDER = '0x54b83d1e6Ee818FFB96D260Fc3E4dfc3Aaf03f79';
+const MAINNET_USDG = '0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168';
+const MAINNET_HOLDER = '0xdf5FfF9cb88B3cAb50572FAE73E2EB08599D25D4';
+
 const PAYEE_A = '0x000000000000000000000000000000000000aaaa';
 const PAYEE_X = '0x000000000000000000000000000000000000bbbb';
 
@@ -30,22 +35,8 @@ const FIXTURES: Record<Fixture, { verdict: string; ruleCodes: string; quoteHash:
   },
 };
 
-const STEPS: Record<System, string[]> = {
-  groth16: [
-    'Enqueue prover · quote-match rule engine (Rust) in zkVM',
-    'Execute · collect execution trace and public outputs',
-    'Wrap STARK → Groth16 on BN254 · commitment scalar binding',
-    'Verify on RHC 4663 · ecMul 0x07 & ecPairing 0x08 precompiles active',
-  ],
-  halo2: [
-    'Load hand-written circuit · payTo, amount, asset, chainId',
-    'Prove · halo2-kzg (PSE fork) · universal powers-of-tau',
-    'Export Solidity verifier · ZGuardQuoteVerifier.sol',
-    'Verify on RHC 4663 · BN254 ecPairing 0x08 precompile check',
-  ],
-};
-
 export function ZkPage() {
+  const [chainId, setChainId] = useState<ActiveChain>(46630);
   const [system, setSystem] = useState<System>('groth16');
   const [fixture, setFixture] = useState<Fixture>('allow');
   const [phase, setPhase] = useState<'idle' | 'running' | 'done'>('idle');
@@ -53,7 +44,23 @@ export function ZkPage() {
   const [liveAtt, setLiveAtt] = useState<Record<string, unknown> | null>(null);
   const timers = useRef<number[]>([]);
   const fx = FIXTURES[fixture];
-  const total = STEPS[system].length;
+
+  const steps: Record<System, string[]> = {
+    groth16: [
+      'Enqueue prover · quote-match rule engine (Rust) in zkVM',
+      'Execute · collect execution trace and public outputs',
+      'Wrap STARK → Groth16 on BN254 · commitment scalar binding',
+      `Verify ZGuardQuoteVerifier.sol on RHC ${chainId} · BN254 0x07 & 0x08 precompiles`,
+    ],
+    halo2: [
+      'Load hand-written circuit · payTo, amount, asset, chainId',
+      'Prove · halo2-kzg (PSE fork) · universal powers-of-tau',
+      'Compile Solidity verifier · ZGuardQuoteVerifier.sol (solc 0.8.28)',
+      `Verify on RHC ${chainId} · BN254 ecPairing 0x08 + gas benchmark`,
+    ],
+  };
+
+  const total = steps[system].length;
 
   const clear = () => {
     timers.current.forEach((t) => window.clearTimeout(t));
@@ -61,8 +68,9 @@ export function ZkPage() {
   };
   useEffect(() => clear, []);
 
-  const reset = (s: System, f: Fixture) => {
+  const reset = (s: System, f: Fixture, nextChain: ActiveChain = chainId) => {
     clear();
+    setChainId(nextChain);
     setSystem(s);
     setFixture(f);
     setPhase('idle');
@@ -81,19 +89,22 @@ export function ZkPage() {
     const t2 = window.setTimeout(() => setStep(3), 900);
     timers.current.push(t1, t2);
 
+    const usdg = chainId === 46630 ? TESTNET_USDG : MAINNET_USDG;
+    const holder = chainId === 46630 ? TESTNET_HOLDER : MAINNET_HOLDER;
+
     try {
       const verifyBody = {
-        network: 'eip155:4663',
+        network: `eip155:${chainId}`,
         quote: {
-          asset: USDG_ADDR,
+          asset: usdg,
           payTo: PAYEE_A,
           amount: '1000000',
-          chainId: 4663,
+          chainId,
         },
         payload: {
           type: 'eip3009',
           authorization: {
-            from: '0xdf5FfF9cb88B3cAb50572FAE73E2EB08599D25D4',
+            from: holder,
             to: fixture === 'allow' ? PAYEE_A : PAYEE_X,
             value: '1000000',
             validAfter: '0',
@@ -102,8 +113,8 @@ export function ZkPage() {
             domain: {
               name: 'Global Dollar',
               version: '1',
-              chainId: 4663,
-              verifyingContract: USDG_ADDR,
+              chainId,
+              verifyingContract: usdg,
             },
           },
         },
@@ -139,9 +150,9 @@ export function ZkPage() {
   return (
     <div className="relative">
       <PageHeader
-        kicker="ZK layer · attestation.zk"
+        kicker={`ZK layer · attestation.zk · RHC ${chainId}`}
         lines={['Prove the match.', { text: 'Keep the intent private.', muted: true }]}
-        desc="Quote-match is a pure function, so it can be proven. The proof carries commitments, not your intent. Simulation and token risk stay outside the proof by design: scope is always “quote”."
+        desc="Quote-match is a pure function, so it can be proven. ZGuardQuoteVerifier.sol is compiled with solc 0.8.28 and verified against live BN254 precompiles (0x06, 0x07, 0x08) on Robinhood Chain Testnet (46630) & Mainnet (4663)."
         aside={<OrbitIllo size={260} />}
       />
 
@@ -206,9 +217,9 @@ export function ZkPage() {
               <div className="mb-4 font-mono text-[10px] uppercase tracking-[0.22em] text-zinc-500">Scope & onchain status</div>
               <ul className="space-y-3 text-[12px] leading-relaxed text-zinc-400">
                 <li>· <span className="font-mono text-white">attestation.zk.scope</span> is always “quote” on every receipt.</li>
-                <li>· BN254 precompiles ecAdd 0x06, ecMul 0x07, ecPairing 0x08 verified <span className="text-emerald-300">active on 4663</span>.</li>
-                <li>· Solidity contract <span className="font-mono text-zinc-200">ZGuardQuoteVerifier.sol</span> supports single & Merkle-batched verdicts.</li>
-                <li>· Proof is async. The decision is instant; poll <span className="font-mono text-zinc-200">GET /v1/attestation/{'{decisionId}'}</span>.</li>
+                <li>· BN254 precompiles ecAdd 0x06, ecMul 0x07, ecPairing 0x08 verified <span className="text-emerald-300">active on 46630 & 4663</span>.</li>
+                <li>· <span className="font-mono text-zinc-200">ZGuardQuoteVerifier.sol</span> compiled with solc 0.8.28 (single & Merkle-batched verdicts + live gas benchmark).</li>
+                <li>· Deploy to RHC Testnet (0 real fees) via <span className="font-mono text-zinc-200">pnpm deploy:verifier</span>.</li>
               </ul>
             </div>
           </div>
@@ -216,7 +227,20 @@ export function ZkPage() {
           {/* workbench */}
           <div className="flex flex-col gap-5 rounded-3xl border border-white/10 bg-[#070708] p-6 sm:p-8 lg:col-span-7">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <span className="font-mono text-[10px] uppercase tracking-[0.22em] text-zinc-500">Fixture</span>
+              <div className="flex rounded-full border border-white/15 bg-black p-1">
+                {([46630, 4663] as ActiveChain[]).map((cid) => (
+                  <button
+                    key={cid}
+                    type="button"
+                    onClick={() => reset(system, fixture, cid)}
+                    className={`rounded-full px-3.5 py-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.14em] transition-all ${
+                      chainId === cid ? 'bg-white text-black' : 'text-zinc-500 hover:text-white'
+                    }`}
+                  >
+                    {cid === 46630 ? 'Testnet · 46630' : 'Mainnet · 4663'}
+                  </button>
+                ))}
+              </div>
               <div className="flex rounded-full border border-white/15 bg-black p-1">
                 {(['allow', 'deny'] as Fixture[]).map((f) => (
                   <button
@@ -243,6 +267,7 @@ export function ZkPage() {
                 ['txHash', shortHex(pubInputs?.txHash, fx.txHash)],
                 ['verdict', String(pubInputs?.verdict ?? fx.verdict)],
                 ['ruleBitmask', String(pubInputs?.ruleBitmask ?? fx.ruleCodes)],
+                ['verifierGasUsed', String(liveAtt?.verifierGasUsed ?? 'measured on prove')],
                 ['scope', `"${String(liveAtt?.scope ?? 'quote')}"`],
               ].map(([k, v]) => (
                 <div key={k} className="flex justify-between gap-4 border-b border-white/5 py-2 last:border-0">
@@ -255,7 +280,7 @@ export function ZkPage() {
 
             <div className="rounded-2xl border border-white/10 bg-black p-5">
               <ol className="space-y-3">
-                {STEPS[system].map((s, i) => {
+                {steps[system].map((s, i) => {
                   const state = step > i ? 'done' : step === i && phase === 'running' ? 'run' : 'wait';
                   return (
                     <li key={s} className="flex items-start gap-3 font-mono text-[11px] leading-relaxed">
@@ -290,12 +315,12 @@ export function ZkPage() {
                   <div className="min-w-0 flex-1">
                     <div className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-white">
                       {liveAtt
-                        ? `Status: ${String(liveAtt.status)} · BN254 0x08 pairing verified=${String(liveAtt.bn254PrecompileVerified)}`
+                        ? `Status: ${String(liveAtt.status)} · BN254 0x08=${String(liveAtt.bn254PrecompileVerified)} · verifierGasUsed=${String(liveAtt.verifierGasUsed ?? 'n/a')}`
                         : 'Proof generated · offline fallback'}
                     </div>
                     <div className="mt-1 truncate font-mono text-[9px] uppercase tracking-[0.14em] text-zinc-500">
                       {liveAtt?.proof
-                        ? `proof: ${shortHex(liveAtt.proof, '')} · vkey: ${shortHex(liveAtt.programVKey, '')}`
+                        ? `proof: ${shortHex(liveAtt.proof, '')} · verifyTx: ${liveAtt.verifyTx ? shortHex(liveAtt.verifyTx, '') : 'simulated via eth_simulateV1'}`
                         : 'verifyTx: pending · scope: "quote"'}
                     </div>
                   </div>
@@ -311,7 +336,7 @@ export function ZkPage() {
                 phase === 'running' ? 'cursor-wait border border-white/15 text-zinc-500' : 'bg-white text-black hover:shadow-[0_0_40px_-10px_rgba(255,255,255,0.5)]'
               }`}
             >
-              {phase === 'running' ? 'Proving on RHC 4663…' : phase === 'done' ? 'Prove again' : `Prove ${system === 'groth16' ? 'Groth16' : 'Halo2-KZG'} verdict`}
+              {phase === 'running' ? `Proving on RHC ${chainId}…` : phase === 'done' ? 'Prove again' : `Prove ${system === 'groth16' ? 'Groth16' : 'Halo2-KZG'} verdict`}
             </button>
           </div>
         </div>
@@ -339,7 +364,7 @@ export function ZkPage() {
               ))}
             </ul>
             <div className="mt-8 rounded-2xl border border-white/10 bg-black p-5 font-mono text-[11px] text-zinc-400">
-              GET /v1/attestation/{'{decisionId}'} → status · proof · publicInputs
+              GET /v1/attestation/{'{decisionId}'} → status · proof · publicInputs · verifierGasUsed
             </div>
           </Reveal>
         </div>

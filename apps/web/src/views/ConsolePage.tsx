@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   CheckCircle2,
+  ExternalLink,
   FlaskConical,
   Fingerprint,
   KeyRound,
@@ -14,14 +15,20 @@ import {
   ShieldAlert,
   ShieldCheck,
   ShieldX,
+  Wallet,
   XCircle,
   type LucideIcon,
 } from 'lucide-react';
 import { PageHeader } from '../components/PageHeader';
 import { EASE } from '../components/Reveal';
-import { postLiveGuard } from '../lib/zguard-api';
+import {
+  connectBrowserWalletToRhc,
+  postLiveGuard,
+  runGuardedWalletEip3009Demo,
+} from '../lib/zguard-api';
 
 type Dec = 'allow' | 'deny' | 'abstain';
+type ActiveChain = 46630 | 4663;
 
 interface CheckOut {
   d: Dec;
@@ -43,213 +50,403 @@ interface Scenario {
   liveRequest: Record<string, unknown>;
 }
 
-const USDG_ADDR = '0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168';
 const PAYEE_A = '0x000000000000000000000000000000000000aaaa';
 const PAYEE_X = '0x000000000000000000000000000000000000bbbb';
-// Live funded USDG holder on RHC 4663 (Paxos / pool address) so eth_simulateV1 succeeds cleanly on mainnet!
-const LIVE_USDG_HOLDER = '0xdf5FfF9cb88B3cAb50572FAE73E2EB08599D25D4';
-const PONS_CURVE_SAMPLE = '0x05811bBAF648E5FE455d527342Cb4DD03Fa21214';
-const AAPL_STOCK_TOKEN = '0xaF3D76f1834A1d425780943C99Ea8A608f8a93f9';
 
-const USDG_DOMAIN = {
-  name: 'Global Dollar',
-  version: '1',
-  chainId: 4663,
-  verifyingContract: USDG_ADDR,
-};
+// --- Live Verified Robinhood Chain Testnet (46630) Contracts ---
+const TESTNET_USDG = '0x7E955252E15c84f5768B83c41a71F9eba181802F';
+const TESTNET_USDG_HOLDER = '0x54b83d1e6Ee818FFB96D260Fc3E4dfc3Aaf03f79';
+const TESTNET_TSLA_STOCK = '0xC9f9c86933092BbbfFF3CCb4b105A4A94bf3Bd4E';
+const TESTNET_KOIP_PONS_CURVE = '0x9118BD806cB3906Dc6d50a4409a9e9dF48172365';
+const TESTNET_PONSIDOOG_GRAD = '0x9c8CB5D0Bd313ebE5813aCfd8daa4E22DE76DFfd';
+const TESTNET_MOCK_USDG_SPOOF = '0x8F9231B0F448bA9AD045348437458721676c23BC';
 
-const SCENARIOS: Scenario[] = [
-  {
-    id: 'ok',
-    label: 'Matching USDG payment',
-    tag: 'x402 · USDG · 4663',
-    d: 'allow',
-    reason: 'quote parity verified · simulation matches intent · canonical USDG',
-    codes: [],
-    hash: '0x9be1…77c3',
-    ms: 412,
-    checks: [
-      { d: 'allow', codes: [], head: 'payTo, asset, amount and chainId match the quote', rows: [['payTo', '0x0000…aAaA'], ['amount', '1,000,000 micro'], ['asset', 'USDG · 6dp'], ['chainId', '4663']] },
-      { d: 'allow', codes: [], head: 'success · 2 balance changes · no approvals', rows: [['status', 'success'], ['Δ payer', '−1.00 USDG'], ['approvals', 'none']] },
-      { d: 'allow', codes: [], head: 'canonical USDG · mint not exposed', rows: [['kind', 'usdg'], ['mintable', 'false'], ['venue', 'canonical']] },
-    ],
-    liveRequest: {
-      network: 'eip155:4663',
-      quote: { asset: USDG_ADDR, payTo: PAYEE_A, amount: '0', chainId: 4663 },
-      payload: {
-        type: 'eip3009',
-        authorization: {
-          from: LIVE_USDG_HOLDER,
-          to: PAYEE_A,
-          value: '0',
-          validAfter: '0',
-          validBefore: '4102444800',
-          nonce: '0x0000000000000000000000000000000000000000000000000000000000000001',
-          domain: USDG_DOMAIN,
+// --- Live Verified Robinhood Chain Mainnet (4663) Contracts ---
+const MAINNET_USDG = '0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168';
+const MAINNET_USDG_HOLDER = '0xdf5FfF9cb88B3cAb50572FAE73E2EB08599D25D4';
+const MAINNET_PONS_CURVE = '0x05811bBAF648E5FE455d527342Cb4DD03Fa21214';
+const MAINNET_AAPL_STOCK = '0xaF3D76f1834A1d425780943C99Ea8A608f8a93f9';
+
+function buildScenarios(chainId: ActiveChain): Scenario[] {
+  const isTestnet = chainId === 46630;
+  const network = `eip155:${chainId}`;
+  const usdg = isTestnet ? TESTNET_USDG : MAINNET_USDG;
+  const holder = isTestnet ? TESTNET_USDG_HOLDER : MAINNET_USDG_HOLDER;
+  const stockToken = isTestnet ? TESTNET_TSLA_STOCK : MAINNET_AAPL_STOCK;
+  const stockSym = isTestnet ? 'TSLA' : 'AAPL';
+  const ponsCurveToken = isTestnet ? TESTNET_KOIP_PONS_CURVE : MAINNET_PONS_CURVE;
+  const usdgDomain = {
+    name: 'Global Dollar',
+    version: '1',
+    chainId,
+    verifyingContract: usdg,
+  };
+
+  return [
+    {
+      id: 'ok',
+      label: `Matching USDG payment (${chainId})`,
+      tag: `x402 · USDG · ${chainId}${isTestnet ? ' testnet' : ''}`,
+      d: 'allow',
+      reason: 'quote parity verified · simulation matches intent · canonical USDG',
+      codes: [],
+      hash: '0x9be1…77c3',
+      ms: 390,
+      checks: [
+        {
+          d: 'allow',
+          codes: [],
+          head: `payTo, asset, amount and chainId match on RHC ${chainId}`,
+          rows: [
+            ['payTo', '0x0000…aAaA'],
+            ['amount', '0 micro (sim)'],
+            ['asset', 'USDG · 6dp'],
+            ['chainId', String(chainId)],
+          ],
         },
-      },
-      checks: ['quote', 'simulation', 'token_risk'],
-    },
-  },
-  {
-    id: 'payto',
-    label: 'payTo swapped in transit',
-    tag: 'x402 · interception',
-    d: 'deny',
-    reason: 'payTo differs from quote (Q-001)',
-    codes: ['Q-001', 'S-DIFF'],
-    hash: '0x1d04…ab28',
-    ms: 388,
-    checks: [
-      { d: 'deny', codes: ['Q-001'], head: 'recipient differs from the signed quote', rows: [['expected', '0x0000…aAaA'], ['actual', '0x0000…bBbB ✗']] },
-      { d: 'deny', codes: ['S-DIFF'], head: 'quoted payee receives 0 USDG in simulation', rows: [['status', 'success'], ['Δ quoted payee', '0 ✗']] },
-      { d: 'allow', codes: [], head: 'canonical USDG', rows: [['kind', 'usdg'], ['mintable', 'false']] },
-    ],
-    liveRequest: {
-      network: 'eip155:4663',
-      quote: { asset: USDG_ADDR, payTo: PAYEE_A, amount: '1000000', chainId: 4663 },
-      payload: {
-        type: 'eip3009',
-        authorization: {
-          from: LIVE_USDG_HOLDER,
-          to: PAYEE_X,
-          value: '1000000',
-          validAfter: '0',
-          validBefore: '4102444800',
-          nonce: '0x0000000000000000000000000000000000000000000000000000000000000002',
-          domain: USDG_DOMAIN,
+        {
+          d: 'allow',
+          codes: [],
+          head: 'success via eth_simulateV1 · no approvals',
+          rows: [
+            ['status', 'success'],
+            ['sequencer', 'up'],
+            ['approvals', 'none'],
+          ],
         },
-      },
-      checks: ['quote', 'simulation', 'token_risk'],
-    },
-  },
-  {
-    id: 'amount',
-    label: 'Amount tampered ×250',
-    tag: 'x402 · amount',
-    d: 'deny',
-    reason: 'amount 250000000 ≠ quote 1000000 (Q-002)',
-    codes: ['Q-002'],
-    hash: '0x55f2…01bd',
-    ms: 395,
-    checks: [
-      { d: 'deny', codes: ['Q-002'], head: 'authorization is 250× the quoted amount', rows: [['expected', '1,000,000'], ['actual', '250,000,000 ✗']] },
-      { d: 'deny', codes: ['S-REVERT'], head: 'would attempt 250 USDG transfer on RHC', rows: [['status', 'revert / diff'], ['Δ payer', '−250.00 USDG']] },
-      { d: 'allow', codes: [], head: 'canonical USDG', rows: [['kind', 'usdg'], ['mintable', 'false']] },
-    ],
-    liveRequest: {
-      network: 'eip155:4663',
-      quote: { asset: USDG_ADDR, payTo: PAYEE_A, amount: '1000000', chainId: 4663 },
-      payload: {
-        type: 'eip3009',
-        authorization: {
-          from: LIVE_USDG_HOLDER,
-          to: PAYEE_A,
-          value: '250000000',
-          validAfter: '0',
-          validBefore: '4102444800',
-          nonce: '0x0000000000000000000000000000000000000000000000000000000000000003',
-          domain: USDG_DOMAIN,
+        {
+          d: 'allow',
+          codes: [],
+          head: 'canonical USDG · mint not exposed',
+          rows: [
+            ['kind', 'usdg'],
+            ['mintable', 'false'],
+            ['venue', 'canonical'],
+          ],
         },
-      },
-      checks: ['quote', 'simulation', 'token_risk'],
-    },
-  },
-  {
-    id: 'pons',
-    label: 'Live pons V2 curve token scan',
-    tag: 'pons curve · RHC 4663 live',
-    d: 'allow',
-    reason: 'pons_curve verified via PonsFactoryV2 · LP locked on curve',
-    codes: [],
-    hash: '0xc307…9e11',
-    ms: 510,
-    checks: [
-      { d: 'allow', codes: [], head: 'intent matches router calldata', rows: [['chain', '4663'], ['target', 'USDG'], ['value', '0']] },
-      { d: 'allow', codes: [], head: 'simulation succeeded on RHC 4663', rows: [['status', 'success'], ['approvals', 'none']] },
-      { d: 'allow', codes: [], head: 'pons V2 curve token · mintable=false', rows: [['kind', 'pons_curve'], ['mintable', 'false'], ['stack', 'pons v2']] },
-    ],
-    liveRequest: {
-      network: 'eip155:4663',
-      token: PONS_CURVE_SAMPLE,
-      payload: {
-        type: 'intent',
-        intent: {
-          chainId: 4663,
-          to: USDG_ADDR,
-          function: 'transfer(address,uint256)',
-          args: [PAYEE_A, 0],
-          value: '0',
-          from: LIVE_USDG_HOLDER,
+      ],
+      liveRequest: {
+        network,
+        quote: { asset: usdg, payTo: PAYEE_A, amount: '0', chainId },
+        payload: {
+          type: 'eip3009',
+          authorization: {
+            from: holder,
+            to: PAYEE_A,
+            value: '0',
+            validAfter: '0',
+            validBefore: '4102444800',
+            nonce: '0x0000000000000000000000000000000000000000000000000000000000000001',
+            domain: usdgDomain,
+          },
         },
+        checks: ['quote', 'simulation', 'token_risk'],
       },
-      checks: ['quote', 'simulation', 'token_risk'],
     },
-  },
-  {
-    id: 'undecodable',
-    label: 'Undecodable payload bytes',
-    tag: 'malformed · abstain',
-    d: 'abstain',
-    reason: 'payload not decodable · downstream checks fail-closed',
-    codes: ['Q-DECODE', 'S-FAIL', 'T-UNKNOWN'],
-    hash: '0x0000…0000',
-    ms: 171,
-    checks: [
-      { d: 'abstain', codes: ['Q-DECODE'], head: 'calldata failed to decode at offset 0x02', rows: [['decode', 'failed ✗'], ['policy', 'fail-closed']] },
-      { d: 'abstain', codes: ['S-FAIL'], head: 'not run · no intent to simulate', rows: [['status', 'unknown'], ['reason', 'upstream abstain']] },
-      { d: 'abstain', codes: ['T-UNKNOWN'], head: 'token not derivable from payload', rows: [['kind', 'other'], ['policy', 'fail-closed']] },
-    ],
-    liveRequest: {
-      network: 'eip155:4663',
-      quote: { asset: USDG_ADDR, payTo: PAYEE_A, amount: '1000000', chainId: 4663 },
-      payload: {
-        type: 'evm_tx',
-        tx: '0xdeadbeef02',
-      },
-      checks: ['quote', 'simulation', 'token_risk'],
-    },
-  },
-  {
-    id: 'approve',
-    label: 'Hidden approve() in swap',
-    tag: 'permit leak · delegate',
-    d: 'deny',
-    reason: 'approval outside intent (Q-006) · unlimited allowance (S-APPROVE)',
-    codes: ['Q-006', 'S-APPROVE'],
-    hash: '0x7aa9…c3d0',
-    ms: 447,
-    checks: [
-      { d: 'deny', codes: ['Q-006'], head: 'approve() is not present in the signed intent', rows: [['intent', 'transfer only'], ['found', 'approve(spender, ∞) ✗']] },
-      { d: 'deny', codes: ['S-APPROVE'], head: 'unlimited allowance would be granted', rows: [['spender', '0x0000…bBbB'], ['allowance', '∞ ✗']] },
-      { d: 'allow', codes: [], head: 'canonical Stock Token (AAPL)', rows: [['kind', 'stock_token'], ['mintable', 'false']] },
-    ],
-    liveRequest: {
-      network: 'eip155:4663',
-      token: AAPL_STOCK_TOKEN,
-      payload: {
-        type: 'intent',
-        intent: {
-          chainId: 4663,
-          to: USDG_ADDR,
-          function: 'transfer(address,uint256)',
-          args: [PAYEE_A, 0],
-          value: '0',
-          from: LIVE_USDG_HOLDER,
+    {
+      id: 'pons',
+      label: isTestnet
+        ? 'Active Pons curve scan (KOIP · 46630)'
+        : 'Live Pons V2 curve scan (4663)',
+      tag: `pons_curve · live RHC ${chainId}`,
+      d: 'allow',
+      reason: 'pons_curve verified via factory · LP locked on bonding curve',
+      codes: [],
+      hash: '0xc307…9e11',
+      ms: 480,
+      checks: [
+        {
+          d: 'allow',
+          codes: [],
+          head: 'intent matches router calldata',
+          rows: [
+            ['chain', String(chainId)],
+            ['target', 'USDG'],
+            ['value', '0'],
+          ],
         },
-        tx: {
-          chainId: 4663,
-          from: LIVE_USDG_HOLDER,
-          to: USDG_ADDR,
-          value: '0',
-          // approve(0x000000000000000000000000000000000000bBbB, maxUint256)
-          data: '0x095ea7b3000000000000000000000000000000000000000000000000000000000000bbbbffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+        {
+          d: 'allow',
+          codes: [],
+          head: `simulation succeeded on RHC ${chainId}`,
+          rows: [
+            ['status', 'success'],
+            ['approvals', 'none'],
+          ],
         },
+        {
+          d: 'allow',
+          codes: [],
+          head: 'active pons bonding curve · LP locked',
+          rows: [
+            ['kind', 'pons_curve'],
+            ['mintable', 'false'],
+            ['venue', 'pons_curve'],
+          ],
+        },
+      ],
+      liveRequest: {
+        network,
+        token: ponsCurveToken,
+        payload: {
+          type: 'intent',
+          intent: {
+            chainId,
+            to: usdg,
+            function: 'transfer(address,uint256)',
+            args: [PAYEE_A, 0],
+            value: '0',
+            from: holder,
+          },
+        },
+        checks: ['quote', 'simulation', 'token_risk'],
       },
-      checks: ['quote', 'simulation', 'token_risk'],
     },
-  },
-];
+    {
+      id: 'stock_or_grad',
+      label: isTestnet
+        ? 'Graduated Pons Uniswap v4 (PONSIDOOG)'
+        : 'Official Stock Token (AAPL · 4663)',
+      tag: isTestnet ? 'pons_graduated_v4 · 46630' : 'stock_token · 4663',
+      d: 'allow',
+      reason: isTestnet
+        ? 'graduated Pons pool verified on Uniswap v4 PoolManager'
+        : 'verified official Robinhood Stock Token',
+      codes: [],
+      hash: '0x6e24…7a04',
+      ms: 465,
+      checks: [
+        {
+          d: 'allow',
+          codes: [],
+          head: 'intent matches router calldata',
+          rows: [
+            ['chain', String(chainId)],
+            ['value', '0'],
+          ],
+        },
+        {
+          d: 'allow',
+          codes: [],
+          head: `simulation succeeded on RHC ${chainId}`,
+          rows: [
+            ['status', 'success'],
+            ['approvals', 'none'],
+          ],
+        },
+        {
+          d: 'allow',
+          codes: [],
+          head: isTestnet ? 'graduated Uniswap v4 pool' : 'official Stock Token',
+          rows: [
+            ['kind', isTestnet ? 'pons_graduated_v4' : 'stock_token'],
+            ['locked', 'true'],
+          ],
+        },
+      ],
+      liveRequest: {
+        network,
+        token: isTestnet ? TESTNET_PONSIDOOG_GRAD : MAINNET_AAPL_STOCK,
+        payload: {
+          type: 'intent',
+          intent: {
+            chainId,
+            to: usdg,
+            function: 'transfer(address,uint256)',
+            args: [PAYEE_A, 0],
+            value: '0',
+            from: holder,
+          },
+        },
+        checks: ['quote', 'simulation', 'token_risk'],
+      },
+    },
+    {
+      id: 'spoof_or_payto',
+      label: isTestnet
+        ? 'Spoofed "Mock USDG" faucet token'
+        : 'payTo swapped in transit (Q-001)',
+      tag: isTestnet ? 'ticker spoof · open faucet · 46630' : 'x402 · interception',
+      d: 'deny',
+      reason: isTestnet
+        ? 'open public faucet/mint selector exposed (T-MINT) + USDG lookalike'
+        : 'payTo differs from quote (Q-001)',
+      codes: isTestnet ? ['T-MINT'] : ['Q-001', 'S-DIFF'],
+      hash: '0x8f92…23bc',
+      ms: 410,
+      checks: [
+        {
+          d: isTestnet ? 'allow' : 'deny',
+          codes: isTestnet ? [] : ['Q-001'],
+          head: isTestnet ? 'router intent parity ok' : 'recipient differs from quote',
+          rows: [
+            ['expected', '0x0000…aAaA'],
+            ['actual', isTestnet ? '0x0000…aAaA' : '0x0000…bBbB ✗'],
+          ],
+        },
+        {
+          d: isTestnet ? 'allow' : 'deny',
+          codes: isTestnet ? [] : ['S-DIFF'],
+          head: isTestnet ? 'simulation succeeded' : 'quoted payee receives 0 USDG',
+          rows: [['status', 'success']],
+        },
+        {
+          d: isTestnet ? 'deny' : 'allow',
+          codes: isTestnet ? ['T-MINT'] : [],
+          head: isTestnet ? 'spoofed "USDG" with open faucet() ✗' : 'canonical USDG',
+          rows: [
+            ['kind', isTestnet ? 'other ✗' : 'usdg'],
+            ['mintable', isTestnet ? 'true ✗' : 'false'],
+          ],
+        },
+      ],
+      liveRequest: isTestnet
+        ? {
+            network,
+            token: TESTNET_MOCK_USDG_SPOOF,
+            payload: {
+              type: 'intent',
+              intent: {
+                chainId,
+                to: usdg,
+                function: 'transfer(address,uint256)',
+                args: [PAYEE_A, 0],
+                value: '0',
+                from: holder,
+              },
+            },
+            checks: ['quote', 'simulation', 'token_risk'],
+          }
+        : {
+            network,
+            quote: { asset: usdg, payTo: PAYEE_A, amount: '1000000', chainId },
+            payload: {
+              type: 'eip3009',
+              authorization: {
+                from: holder,
+                to: PAYEE_X,
+                value: '1000000',
+                validAfter: '0',
+                validBefore: '4102444800',
+                nonce: '0x0000000000000000000000000000000000000000000000000000000000000002',
+                domain: usdgDomain,
+              },
+            },
+            checks: ['quote', 'simulation', 'token_risk'],
+          },
+    },
+    {
+      id: 'approve',
+      label: 'Perm / Terminal hidden approve()',
+      tag: 'permit leak · Q-006 · S-APPROVE',
+      d: 'deny',
+      reason: 'approval outside intent (Q-006) · unlimited allowance (S-APPROVE)',
+      codes: ['Q-006', 'S-APPROVE'],
+      hash: '0x7aa9…c3d0',
+      ms: 430,
+      checks: [
+        {
+          d: 'deny',
+          codes: ['Q-006'],
+          head: 'approve() is not present in the signed intent',
+          rows: [
+            ['intent', 'transfer only'],
+            ['found', 'approve(spender, ∞) ✗'],
+          ],
+        },
+        {
+          d: 'deny',
+          codes: ['S-APPROVE'],
+          head: 'unlimited allowance would be granted',
+          rows: [
+            ['spender', '0x0000…bBbB'],
+            ['allowance', '∞ ✗'],
+          ],
+        },
+        {
+          d: 'allow',
+          codes: [],
+          head: `canonical Stock Token (${stockSym})`,
+          rows: [
+            ['kind', 'stock_token'],
+            ['mintable', 'false'],
+          ],
+        },
+      ],
+      liveRequest: {
+        network,
+        token: stockToken,
+        payload: {
+          type: 'intent',
+          intent: {
+            chainId,
+            to: usdg,
+            function: 'transfer(address,uint256)',
+            args: [PAYEE_A, 0],
+            value: '0',
+            from: holder,
+          },
+          tx: {
+            chainId,
+            from: holder,
+            to: usdg,
+            value: '0',
+            data: '0x095ea7b3000000000000000000000000000000000000000000000000000000000000bbbbffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+          },
+        },
+        checks: ['quote', 'simulation', 'token_risk'],
+      },
+    },
+    {
+      id: 'undecodable',
+      label: 'Undecodable payload bytes',
+      tag: 'malformed · fail-closed abstain',
+      d: 'abstain',
+      reason: 'payload not decodable · downstream checks fail-closed',
+      codes: ['Q-DECODE', 'S-FAIL'],
+      hash: '0x0000…0000',
+      ms: 165,
+      checks: [
+        {
+          d: 'abstain',
+          codes: ['Q-DECODE'],
+          head: 'calldata failed to decode · fail-closed',
+          rows: [
+            ['decode', 'failed ✗'],
+            ['policy', 'fail-closed'],
+          ],
+        },
+        {
+          d: 'abstain',
+          codes: ['S-FAIL'],
+          head: 'skipped · upstream undecodable',
+          rows: [
+            ['status', 'unknown'],
+            ['reason', 'upstream abstain'],
+          ],
+        },
+        {
+          d: 'allow',
+          codes: [],
+          head: 'canonical USDG',
+          rows: [
+            ['kind', 'usdg'],
+            ['policy', 'fail-closed'],
+          ],
+        },
+      ],
+      liveRequest: {
+        network,
+        quote: { asset: usdg, payTo: PAYEE_A, amount: '1000000', chainId },
+        payload: {
+          type: 'evm_tx',
+          tx: '0xdeadbeef02',
+        },
+        checks: ['quote', 'simulation', 'token_risk'],
+      },
+    },
+  ];
+}
 
 const CHECK_NAMES = ['quote', 'simulation', 'token_risk'];
 const CHECK_ICONS: LucideIcon[] = [ScanLine, FlaskConical, Fingerprint];
@@ -270,25 +467,29 @@ const TONE: Record<Dec, string> = {
 const DEC_ICON: Record<Dec, LucideIcon> = { allow: ShieldCheck, deny: ShieldX, abstain: ShieldAlert };
 const ROW_ICON: Record<Dec, LucideIcon> = { allow: CheckCircle2, deny: XCircle, abstain: MinusCircle };
 
-function fallbackResponseOf(s: Scenario): Record<string, unknown> {
+function fallbackResponseOf(s: Scenario, chainId: ActiveChain): Record<string, unknown> {
   return {
     decision: s.d,
     reason: s.reason,
     codes: s.codes,
     payload_hash: s.hash,
     expires_at: s.d === 'allow' ? new Date(Date.now() + 120_000).toISOString() : null,
-    network: 'eip155:4663',
+    network: `eip155:${chainId}`,
     checks: {
       quote: { decision: s.checks[0].d, codes: s.checks[0].codes },
       simulation: { decision: s.checks[1].d, codes: s.checks[1].codes },
       token_risk: { decision: s.checks[2].d, codes: s.checks[2].codes },
     },
     flags: [],
-    charged: { asset: 'USDG', amount: '15000', unit: 'micro' },
+    charged: { asset: 'USDG', amount: '15000', unit: 'micro', rail: `eip155:${chainId}` },
   };
 }
 
-function mapLiveResponseToView(live: Record<string, unknown>, fallback: Scenario): {
+function mapLiveResponseToView(
+  live: Record<string, unknown>,
+  fallback: Scenario,
+  chainId: ActiveChain
+): {
   d: Dec;
   reason: string;
   codes: string[];
@@ -316,12 +517,12 @@ function mapLiveResponseToView(live: Record<string, unknown>, fallback: Scenario
         codes: (q.codes as string[]) ?? [],
         head:
           q.decision === 'allow'
-            ? 'payTo, asset, amount and chainId match on RHC 4663'
-            : ((q.mismatches as string[] | undefined)?.[0] ?? fallback.checks[0].head),
+            ? `payTo, asset, amount & chainId match on RHC ${chainId}`
+            : ((q.notes as string[] | undefined)?.[0] ?? fallback.checks[0].head),
         rows: [
           ['expected', String((q.expected as Record<string, unknown>)?.payTo ?? 'intent').slice(0, 14)],
           ['amount', String((q.actual as Record<string, unknown>)?.amount ?? '0')],
-          ['domain', q.domainVerified ? 'verified onchain' : 'intent'],
+          ['chainId', String(chainId)],
         ],
       }
     : fallback.checks[0];
@@ -330,7 +531,7 @@ function mapLiveResponseToView(live: Record<string, unknown>, fallback: Scenario
     ? {
         d: (sim.decision as Dec) ?? fallback.checks[1].d,
         codes: (sim.codes as string[]) ?? [],
-        head: `${String(sim.status ?? 'unknown')} via ${String(sim.method ?? 'eth_simulateV1')}`,
+        head: `${String(sim.status ?? 'unknown')} on RHC ${chainId}`,
         rows: [
           ['status', String(sim.status ?? 'unknown')],
           ['gasUsed', String(sim.gasUsed ?? 'n/a')],
@@ -339,6 +540,7 @@ function mapLiveResponseToView(live: Record<string, unknown>, fallback: Scenario
       }
     : fallback.checks[1];
 
+  const holders = (tr?.holders as { count?: number | null; top10Bps?: number | null } | undefined) ?? {};
   const trOut: CheckOut = tr
     ? {
         d: (tr.decision as Dec) ?? fallback.checks[2].d,
@@ -347,7 +549,12 @@ function mapLiveResponseToView(live: Record<string, unknown>, fallback: Scenario
         rows: [
           ['kind', String(tr.kind ?? 'other')],
           ['mintable', String((tr.authorities as Record<string, unknown>)?.mintable ?? 'null')],
-          ['venue', String((tr.liquidity as Record<string, unknown>)?.venue ?? 'unknown')],
+          [
+            'holders',
+            holders.count !== null && holders.count !== undefined
+              ? `${holders.count} (top10 ${holders.top10Bps ?? 'n/a'} bps)`
+              : String((tr.liquidity as Record<string, unknown>)?.venue ?? 'unknown'),
+          ],
         ],
       }
     : fallback.checks[2];
@@ -379,6 +586,7 @@ function JsonLine({ line }: { line: string }) {
 }
 
 export function ConsolePage() {
+  const [chainId, setChainId] = useState<ActiveChain>(46630);
   const [sid, setSid] = useState('ok');
   const [customToken, setCustomToken] = useState('');
   const [phase, setPhase] = useState<'idle' | 'running' | 'done'>('idle');
@@ -387,8 +595,15 @@ export function ConsolePage() {
   const [liveJson, setLiveJson] = useState<Record<string, unknown> | null>(null);
   const [liveView, setLiveView] = useState<ReturnType<typeof mapLiveResponseToView> | null>(null);
   const [apiMode, setApiMode] = useState<'live' | 'offline-fixture'>('live');
+
+  // Browser Wallet Testnet State
+  const [walletAddr, setWalletAddr] = useState<string | null>(null);
+  const [walletBusy, setWalletBusy] = useState(false);
+  const [walletStatus, setWalletStatus] = useState<string | null>(null);
+
   const timers = useRef<number[]>([]);
-  const sc = SCENARIOS.find((s) => s.id === sid) ?? SCENARIOS[0];
+  const scenarios = buildScenarios(chainId);
+  const sc = scenarios.find((s) => s.id === sid) ?? scenarios[0];
 
   const clear = () => {
     timers.current.forEach((t) => window.clearTimeout(t));
@@ -396,6 +611,16 @@ export function ConsolePage() {
   };
 
   useEffect(() => clear, []);
+
+  const switchChain = (next: ActiveChain) => {
+    clear();
+    setChainId(next);
+    setPhase('idle');
+    setStage(0);
+    setLog([]);
+    setLiveJson(null);
+    setLiveView(null);
+  };
 
   const select = (id: string) => {
     clear();
@@ -421,8 +646,8 @@ export function ConsolePage() {
         : sc.liveRequest;
 
     setLog([
-      `POST /v1/guard  network=eip155:4663  scenario=${sc.id}`,
-      '  quote sourced from 402 channel · evaluating live RHC 4663 state…',
+      `POST /v1/guard  network=eip155:${chainId}  scenario=${sc.id}`,
+      `  evaluating live Robinhood Chain ${chainId === 46630 ? 'Testnet (0 gas fees)' : 'Mainnet'} state…`,
     ]);
 
     const t1 = window.setTimeout(() => setStage(2), 260);
@@ -433,7 +658,7 @@ export function ConsolePage() {
       const { status, data } = await postLiveGuard(requestBody);
       clear();
       setApiMode('live');
-      const mapped = mapLiveResponseToView(data, sc);
+      const mapped = mapLiveResponseToView(data, sc, chainId);
       setLiveJson(data);
       setLiveView(mapped);
       setStage(3);
@@ -443,12 +668,12 @@ export function ConsolePage() {
         `  quote → ${mapped.checks[0].d}${mapped.checks[0].codes.length ? ` [${mapped.checks[0].codes.join(', ')}]` : ''}`,
         `  simulation → ${mapped.checks[1].d}${mapped.checks[1].codes.length ? ` [${mapped.checks[1].codes.join(', ')}]` : ''}`,
         `  token_risk → ${mapped.checks[2].d}${mapped.checks[2].codes.length ? ` [${mapped.checks[2].codes.join(', ')}]` : ''}`,
-        `← ${status} OK (live RHC 4663) · ${mapped.ms} ms · decision=${mapped.d}`,
+        `← ${status} OK (live RHC ${chainId}) · ${mapped.ms} ms · decision=${mapped.d}`,
       ]);
     } catch {
       clear();
       setApiMode('offline-fixture');
-      setLiveJson(fallbackResponseOf(sc));
+      setLiveJson(fallbackResponseOf(sc, chainId));
       setLiveView(null);
       setStage(3);
       setPhase('done');
@@ -459,6 +684,47 @@ export function ConsolePage() {
         ),
         `← offline fallback · ${sc.ms} ms · decision=${sc.d}`,
       ]);
+    }
+  };
+
+  const handleConnectWallet = async () => {
+    setWalletBusy(true);
+    setWalletStatus(null);
+    try {
+      const res = await connectBrowserWalletToRhc(chainId);
+      setWalletAddr(res.address);
+      setWalletStatus(`Connected ${res.address.slice(0, 6)}…${res.address.slice(-4)} on RHC ${res.chainId}`);
+    } catch (err) {
+      setWalletStatus(err instanceof Error ? err.message : String(err));
+    } finally {
+      setWalletBusy(false);
+    }
+  };
+
+  const handleGuardedWalletSign = async (tamperPayTo: boolean) => {
+    if (!walletAddr) return;
+    setWalletBusy(true);
+    setWalletStatus(null);
+    try {
+      const res = await runGuardedWalletEip3009Demo({
+        walletAddress: walletAddr,
+        chainId,
+        tamperPayTo,
+      });
+      const mapped = mapLiveResponseToView(res.guardResponse, sc, chainId);
+      setLiveJson(res.guardResponse);
+      setLiveView(mapped);
+      setStage(3);
+      setPhase('done');
+      if (res.signature) {
+        setWalletStatus(`ALLOW → Wallet signed EIP-712 (0 gas): ${res.signature.slice(0, 14)}…`);
+      } else {
+        setWalletStatus(`${res.decision.toUpperCase()} → ${res.reason}`);
+      }
+    } catch (err) {
+      setWalletStatus(err instanceof Error ? err.message : String(err));
+    } finally {
+      setWalletBusy(false);
     }
   };
 
@@ -481,22 +747,73 @@ export function ConsolePage() {
   return (
     <div className="relative">
       <PageHeader
-        kicker="Guard Console · POST /v1/guard"
+        kicker={`Guard Console · POST /v1/guard · RHC ${chainId} ${chainId === 46630 ? 'Testnet (Zero-Fee)' : 'Mainnet'}`}
         lines={['Trigger the guard.', { text: 'Watch it refuse.', muted: true }]}
-        desc="Executes live quote-match, eth_simulateV1 simulation and token risk on Robinhood Chain (4663) via /v1/guard, then releases or blocks the signer."
+        desc={`Defaults to Robinhood Chain Testnet (46630) so you can run live eth_simulateV1, Blockscout holder scans, and wallet EIP-712 signing with zero real fees—or toggle to Mainnet (4663) anytime.`}
       />
 
       <section className="relative pb-28">
         <div className="mx-auto grid max-w-7xl gap-6 px-4 sm:px-6 lg:grid-cols-12 lg:px-8">
           {/* LEFT */}
           <div className="flex flex-col gap-4 lg:col-span-4">
+            {/* Chain Selector */}
+            <div className="rounded-3xl border border-white/10 bg-[#070708] p-4">
+              <div className="mb-2.5 flex items-center justify-between px-1 font-mono text-[10px] uppercase tracking-[0.22em] text-zinc-500">
+                <span>Target Network</span>
+                <span className="text-emerald-300">
+                  {chainId === 46630 ? 'Zero Real Fees' : 'Production'}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-1.5 rounded-2xl border border-white/10 bg-black p-1">
+                <button
+                  type="button"
+                  onClick={() => switchChain(46630)}
+                  className={`rounded-xl py-2 font-mono text-[10px] font-bold uppercase tracking-[0.14em] transition ${
+                    chainId === 46630 ? 'bg-white text-black' : 'text-zinc-400 hover:text-white'
+                  }`}
+                >
+                  Testnet · 46630
+                </button>
+                <button
+                  type="button"
+                  onClick={() => switchChain(4663)}
+                  className={`rounded-xl py-2 font-mono text-[10px] font-bold uppercase tracking-[0.14em] transition ${
+                    chainId === 4663 ? 'bg-white text-black' : 'text-zinc-400 hover:text-white'
+                  }`}
+                >
+                  Mainnet · 4663
+                </button>
+              </div>
+              {chainId === 46630 && (
+                <div className="mt-3 flex items-center justify-between px-1 font-mono text-[10px] text-zinc-400">
+                  <a
+                    href="https://faucet.testnet.chain.robinhood.com"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 hover:text-white"
+                  >
+                    RHC Testnet Faucet <ExternalLink className="h-3 w-3" />
+                  </a>
+                  <a
+                    href="https://explorer.testnet.chain.robinhood.com"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 hover:text-white"
+                  >
+                    Explorer <ExternalLink className="h-3 w-3" />
+                  </a>
+                </div>
+              )}
+            </div>
+
+            {/* Scenarios */}
             <div className="rounded-3xl border border-white/10 bg-[#070708] p-4">
               <div className="mb-3 flex items-center justify-between px-2 font-mono text-[10px] uppercase tracking-[0.24em] text-zinc-500">
                 <span>Scenarios</span>
-                <span>{apiMode === 'live' ? 'live RHC 4663' : 'offline fallback'}</span>
+                <span>{apiMode === 'live' ? `live RHC ${chainId}` : 'offline fallback'}</span>
               </div>
               <div className="flex flex-col gap-1.5">
-                {SCENARIOS.map((s) => {
+                {scenarios.map((s) => {
                   const active = s.id === sid;
                   return (
                     <button
@@ -519,10 +836,11 @@ export function ConsolePage() {
               </div>
             </div>
 
+            {/* Execute Guard */}
             <div className="rounded-3xl border border-white/10 bg-[#070708] p-5">
               <div className="mb-3">
                 <label className="mb-1.5 block font-mono text-[9px] uppercase tracking-[0.2em] text-zinc-500">
-                  Optional live token override (chain 4663)
+                  Optional live token override (chain {chainId})
                 </label>
                 <input
                   value={customToken}
@@ -535,7 +853,7 @@ export function ConsolePage() {
 
               <div className="grid grid-cols-2 gap-2 font-mono text-[10px] uppercase tracking-[0.14em]">
                 {[
-                  ['network', 'eip155:4663'],
+                  ['network', `eip155:${chainId}`],
                   ['payload', sc.id === 'undecodable' ? 'opaque bytes' : 'eip3009 / intent'],
                   ['checks', 'quote · sim · token'],
                   ['policy', 'required ×3'],
@@ -573,7 +891,55 @@ export function ConsolePage() {
               </button>
             </div>
 
-            <div className="min-h-[170px] rounded-3xl border border-white/10 bg-black p-4 font-mono text-[11px] leading-[1.75]">
+            {/* Browser Wallet Zero-Fee Testnet Guard */}
+            <div className="rounded-3xl border border-white/10 bg-[#070708] p-5">
+              <div className="mb-2 flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.2em] text-zinc-400">
+                <span className="flex items-center gap-1.5">
+                  <Wallet className="h-3.5 w-3.5" /> Browser Wallet Guard
+                </span>
+                <span className="text-emerald-300">0 Gas EIP-712</span>
+              </div>
+              <p className="mb-3 text-[11px] leading-relaxed text-zinc-500">
+                Connect MetaMask / Rabby on RHC {chainId} to test <code className="text-zinc-300">guardEvmSigner</code>: wallet popup opens on <span className="text-emerald-300">allow</span>, and is blocked before popup on <span className="text-rose-300">deny</span>.
+              </p>
+              {!walletAddr ? (
+                <button
+                  type="button"
+                  disabled={walletBusy}
+                  onClick={handleConnectWallet}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl border border-white/20 bg-black py-2.5 font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-white transition hover:border-white"
+                >
+                  {walletBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wallet className="h-3.5 w-3.5" />}
+                  Connect Wallet · RHC {chainId}
+                </button>
+              ) : (
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    disabled={walletBusy}
+                    onClick={() => handleGuardedWalletSign(false)}
+                    className="rounded-xl border border-emerald-400/40 bg-emerald-400/10 px-2.5 py-2 font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-emerald-200 transition hover:border-emerald-300"
+                  >
+                    Sign Valid (Allow)
+                  </button>
+                  <button
+                    type="button"
+                    disabled={walletBusy}
+                    onClick={() => handleGuardedWalletSign(true)}
+                    className="rounded-xl border border-rose-400/40 bg-rose-400/10 px-2.5 py-2 font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-rose-200 transition hover:border-rose-300"
+                  >
+                    Tamper payTo (Block)
+                  </button>
+                </div>
+              )}
+              {walletStatus && (
+                <div className="mt-2.5 break-words rounded-xl border border-white/10 bg-black p-2.5 font-mono text-[10px] text-zinc-300">
+                  {walletStatus}
+                </div>
+              )}
+            </div>
+
+            <div className="min-h-[150px] rounded-3xl border border-white/10 bg-black p-4 font-mono text-[11px] leading-[1.75]">
               <div className="mb-2 flex items-center justify-between border-b border-white/10 pb-2 text-[9px] uppercase tracking-[0.22em] text-zinc-600">
                 <span>guard.log</span>
                 <span className="flex gap-1">
@@ -584,7 +950,7 @@ export function ConsolePage() {
               </div>
               {log.length === 0 ? (
                 <div className="text-zinc-600">
-                  awaiting invocation<span className="animate-caret"> ▌</span>
+                  awaiting invocation on eip155:{chainId}<span className="animate-caret"> ▌</span>
                 </div>
               ) : (
                 log.map((line, i) => (
@@ -697,7 +1063,7 @@ export function ConsolePage() {
               ) : (
                 <AnimatePresence>
                   <motion.div
-                    key={sc.id + activeView.hash}
+                    key={sc.id + activeView.hash + chainId}
                     initial={{ opacity: 0, y: 14, filter: 'blur(6px)' }}
                     animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
                     transition={{ duration: 0.55, ease: EASE }}
@@ -715,7 +1081,7 @@ export function ConsolePage() {
                     </div>
                     <div className="hidden flex-col items-end gap-1 font-mono text-[9px] uppercase tracking-[0.16em] text-zinc-600 md:flex">
                       <span>hash {activeView.hash}</span>
-                      <span>ttl 120s · bound</span>
+                      <span>ttl 120s · chain {chainId}</span>
                       <span className={TONE[activeView.d]}>{activeView.codes.length ? activeView.codes.join(' · ') : 'no reason codes'}</span>
                     </div>
                   </motion.div>
@@ -727,15 +1093,15 @@ export function ConsolePage() {
             <div className="flex-1 overflow-hidden rounded-3xl border border-white/10 bg-black">
               <div className="flex items-center justify-between border-b border-white/10 px-5 py-3 font-mono text-[10px] uppercase tracking-[0.22em] text-zinc-500">
                 <span>POST /v1/guard → response.json</span>
-                <span>{apiMode === 'live' ? 'live schema v1' : 'fixture schema v1'}</span>
+                <span>{apiMode === 'live' ? `live RHC ${chainId} schema v1` : 'fixture schema v1'}</span>
               </div>
               {phase === 'done' ? (
                 <motion.pre
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
-                  className="max-h-[340px] overflow-auto p-5 font-mono text-[11px] leading-[1.7]"
+                  className="max-h-[380px] overflow-auto p-5 font-mono text-[11px] leading-[1.7]"
                 >
-                  {JSON.stringify(liveJson ?? fallbackResponseOf(sc), null, 2)
+                  {JSON.stringify(liveJson ?? fallbackResponseOf(sc, chainId), null, 2)
                     .split('\n')
                     .map((ln, i) => (
                       <JsonLine key={i} line={ln} />
