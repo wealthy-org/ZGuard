@@ -40,7 +40,7 @@ export function Navbar({ route, navigate }: NavbarProps) {
       transition={{ duration: 0.8, delay: 0.1, ease: [0.22, 1, 0.36, 1] }}
       className="fixed inset-x-0 top-0 z-40"
     >
-      <div className="mx-auto max-w-7xl px-4 pt-4 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-7xl px-3 pt-[max(0.75rem,env(safe-area-inset-top))] sm:px-6 sm:pt-4 lg:px-8">
         <div className="flex items-center justify-between gap-3 rounded-full border border-white/12 bg-black/60 py-2 pl-2 pr-2 shadow-[0_12px_50px_rgba(0,0,0,0.6)] backdrop-blur-2xl">
           <a
             href="#/"
@@ -48,12 +48,12 @@ export function Navbar({ route, navigate }: NavbarProps) {
               e.preventDefault();
               go('home');
             }}
-            className="group flex items-center gap-2.5 pl-1"
+            className="group flex min-w-0 items-center gap-2.5 pl-1"
           >
             <div className="flex h-9 w-9 items-center justify-center rounded-full border border-white/20 bg-black transition group-hover:border-white/70">
               <ZGuardLogo size={26} animated />
             </div>
-            <div className="leading-none">
+            <div className="min-w-0 leading-none">
               <div className="font-display text-[13px] text-white">ZGUARD</div>
               <div className="mt-1 flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-[0.16em] text-zinc-400">
                 <span
@@ -61,7 +61,7 @@ export function Navbar({ route, navigate }: NavbarProps) {
                     chainBadge.isTestnet ? 'bg-emerald-400' : 'bg-sky-400'
                   }`}
                 />
-                <span>
+                <span className="truncate">
                   RHC · {chainBadge.chainId} {chainBadge.isTestnet ? 'TESTNET' : 'MAINNET'}
                 </span>
               </div>
@@ -97,7 +97,7 @@ export function Navbar({ route, navigate }: NavbarProps) {
             })}
           </nav>
 
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             <a
               href={X_URL}
               target="_blank"
@@ -148,7 +148,8 @@ export function Navbar({ route, navigate }: NavbarProps) {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
             transition={{ duration: 0.3 }}
-            className="mx-4 mt-2 space-y-1 rounded-3xl border border-white/12 bg-black/90 p-3 backdrop-blur-xl xl:hidden"
+            data-lenis-prevent
+            className="mx-3 mt-2 max-h-[calc(100dvh-5.5rem)] space-y-1 overflow-y-auto overscroll-contain rounded-3xl border border-white/12 bg-black/90 p-3 backdrop-blur-xl sm:mx-6 lg:mx-8 xl:hidden"
           >
             {ROUTES.filter((r) => r.id !== 'home').map((r, i) => (
               <motion.a
@@ -161,12 +162,12 @@ export function Navbar({ route, navigate }: NavbarProps) {
                   e.preventDefault();
                   go(r.id);
                 }}
-                className={`flex items-center justify-between rounded-2xl px-4 py-3 font-mono text-xs ${
+                className={`flex items-center justify-between gap-3 rounded-2xl px-4 py-3 font-mono text-xs ${
                   r.id === route ? 'bg-white text-black' : 'text-zinc-300 hover:bg-white/8 hover:text-white'
                 }`}
               >
-                <span>{r.label}</span>
-                <span className="text-[10px] opacity-60">{r.hint}</span>
+                <span className="shrink-0">{r.label}</span>
+                <span className="min-w-0 truncate text-right text-[10px] opacity-60">{r.hint}</span>
               </motion.a>
             ))}
           </motion.div>
