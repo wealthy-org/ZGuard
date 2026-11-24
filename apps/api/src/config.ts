@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   DEAD_BURN_ADDRESS,
   RHC_PUBLIC_RPC_MAINNET,
@@ -6,6 +9,43 @@ import {
   type CheckName,
   type ZkSystemId,
 } from "@zguard/sdk";
+
+let dotenvLoaded = false;
+
+export function loadWorkspaceEnvFiles(): void {
+  if (dotenvLoaded) return;
+  dotenvLoaded = true;
+
+  const currentDir = path.dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    path.resolve(currentDir, "../.env.local"),
+    path.resolve(currentDir, "../.env"),
+    path.resolve(currentDir, "../../../.env.local"),
+    path.resolve(currentDir, "../../../.env"),
+  ];
+
+  for (const envPath of candidates) {
+    if (!fs.existsSync(envPath)) continue;
+    const raw = fs.readFileSync(envPath, "utf8");
+    for (const line of raw.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const eqIdx = trimmed.indexOf("=");
+      if (eqIdx <= 0) continue;
+      const key = trimmed.slice(0, eqIdx).trim();
+      let val = trimmed.slice(eqIdx + 1).trim();
+      if (
+        (val.startsWith('"') && val.endsWith('"')) ||
+        (val.startsWith("'") && val.endsWith("'"))
+      ) {
+        val = val.slice(1, -1);
+      }
+      if (process.env[key] === undefined) {
+        process.env[key] = val;
+      }
+    }
+  }
+}
 
 export interface ZGuardAppConfig {
   productName: string;
@@ -68,6 +108,9 @@ function parseOptionalInt(raw?: string): number | null {
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ZGuardAppConfig {
+  if (env === process.env) {
+    loadWorkspaceEnvFiles();
+  }
   const requiredList = (env.ZGUARD_REQUIRED_CHECKS ?? "quote,simulation,token_risk")
     .split(",")
     .map((s) => s.trim())
