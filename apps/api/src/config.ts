@@ -108,6 +108,11 @@ export interface ZGuardAppConfig {
   sequencerMaxBlockAgeSeconds: number;
 
   x402PayTo: string;
+  /**
+   * Set when ZGUARD_X402_PAY_TO is missing (production) or not a valid 0x EVM address. The raw value is
+   * never echoed (operators sometimes paste a secret into the wrong variable). Payments are refused.
+   */
+  x402PayToError: string | null;
   x402SolanaPayTo: string | null;
   x402RelayerPrivateKey: string | null;
   /**
@@ -263,10 +268,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ZGuardAppConfi
     sequencerGracePeriodSeconds: Number(env.ZGUARD_SEQUENCER_GRACE_PERIOD_SECONDS || 3600),
     sequencerMaxBlockAgeSeconds: Number(env.ZGUARD_SEQUENCER_MAX_BLOCK_AGE_SECONDS || 900),
 
-    x402PayTo:
-      env.ZGUARD_X402_PAY_TO ||
-      env.ZGUARD_BUYBACK_WALLET ||
-      "0x0000000000000000000000000000000000004663",
+    ...resolvePayTo(env, isProduction),
     x402SolanaPayTo: env.ZGUARD_X402_SOLANA_PAY_TO || null,
     x402RelayerPrivateKey: env.ZGUARD_X402_RELAYER_PRIVATE_KEY || null,
     x402SettlementMode,
@@ -322,4 +324,30 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ZGuardAppConfi
       env.ZGUARD_ZK_VERIFIER_PRIVATE_KEY || env.ZGUARD_DEPLOYER_PRIVATE_KEY || null,
     zkBatchSize: Number(env.ZGUARD_ZK_BATCH_SIZE ?? 10),
   };
+}
+
+const PLACEHOLDER_PAY_TO = "0x0000000000000000000000000000000000004663";
+
+/** Validates the x402 treasury address; an invalid value is replaced by the placeholder and never exposed. */
+export function resolvePayTo(
+  env: NodeJS.ProcessEnv,
+  isProduction: boolean
+): { x402PayTo: string; x402PayToError: string | null } {
+  const rawName = env.ZGUARD_X402_PAY_TO ? "ZGUARD_X402_PAY_TO" : env.ZGUARD_BUYBACK_WALLET ? "ZGUARD_BUYBACK_WALLET" : null;
+  const raw = (env.ZGUARD_X402_PAY_TO || env.ZGUARD_BUYBACK_WALLET || "").trim();
+  if (!raw) {
+    return {
+      x402PayTo: PLACEHOLDER_PAY_TO,
+      x402PayToError: isProduction
+        ? "ZGUARD_X402_PAY_TO is not set; payments are refused until it is your 0x… wallet address"
+        : null,
+    };
+  }
+  if (!/^0x[0-9a-fA-F]{40}$/.test(raw) || /^0x0{40}$/i.test(raw)) {
+    return {
+      x402PayTo: PLACEHOLDER_PAY_TO,
+      x402PayToError: `${rawName} is not a valid 0x EVM address (42 chars, 0x + 40 hex); value hidden, payments refused`,
+    };
+  }
+  return { x402PayTo: raw, x402PayToError: null };
 }

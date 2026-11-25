@@ -366,7 +366,7 @@ export function createZGuardApp(deps: AppDependencies = {}): {
         wethAddress: activeProfile.wethAddress,
         usdgRhc46630: getRhcChainProfile(RHC_TESTNET_CHAIN_ID).usdgAddress,
         usdgRhc4663: getRhcChainProfile(RHC_MAINNET_CHAIN_ID).usdgAddress,
-        payTo: config.x402PayTo,
+        payTo: config.x402PayToError ? null : config.x402PayTo,
         settlementMode: config.x402SettlementMode,
         effectiveSettlementMode: settlement.ok ? settlement.mode : "unavailable",
         settlementError: settlement.ok ? null : settlement.error,

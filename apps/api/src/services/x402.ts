@@ -151,7 +151,8 @@ export function buildX402Quote(
   return {
     x402Version: 1,
     error: `Insufficient USDG credit. Submit payment on ${activeProfile.network} via X-PAYMENT header.`,
-    accepts,
+    // Never advertise a payable destination while the treasury address is invalid/missing.
+    accepts: config.x402PayToError ? [] : accepts,
     settlement: {
       mode,
       minConfirmations: config.x402MinConfirmations,
@@ -195,6 +196,9 @@ export type EffectiveSettlementMode = "onchain" | "deposit" | "offchain";
 export function resolveSettlementMode(
   config: ZGuardAppConfig
 ): { ok: true; mode: EffectiveSettlementMode } | { ok: false; error: string } {
+  if (config.x402PayToError) {
+    return { ok: false, error: config.x402PayToError };
+  }
   const hasRelayer = Boolean(
     config.x402RelayerPrivateKey && /^0x[0-9a-fA-F]{64}$/.test(config.x402RelayerPrivateKey)
   );
