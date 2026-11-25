@@ -172,15 +172,6 @@ export function Footer({ navigate }: { navigate: Navigate }) {
             <span className="hidden font-mono text-[10px] uppercase tracking-[0.16em] text-zinc-500 md:inline">
               allow · deny · abstain — never “safe”
             </span>
-            <a
-              href={X_URL}
-              target="_blank"
-              rel="noreferrer"
-              aria-label="ZGuard on X"
-              className="flex h-8 w-8 items-center justify-center rounded-full border border-white/15 text-zinc-300 transition hover:rotate-12 hover:border-white/60 hover:text-white"
-            >
-              <XLogo size={12} />
-            </a>
             <button
               type="button"
               onClick={scrollToTop}

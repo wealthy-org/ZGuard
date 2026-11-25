@@ -23,7 +23,7 @@ export interface RuntimeConfigSummary {
   } | null;
 }
 
-export interface TenantBalanceInfo {
+export interface TenantBalanceInfo { 
   tenantId: string;
   apiKeyHint: string;
   creditMicroUsdg: string;
