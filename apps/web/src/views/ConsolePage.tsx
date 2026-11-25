@@ -25,6 +25,7 @@ import { postLiveGuard, runGuardedWalletEip3009Demo } from '../lib/zguard-api';
 import { selectChain, useWallet } from '../lib/wallet';
 import { WalletStatusCard } from '../components/WalletButton';
 import { BuyCreditCard } from '../components/BuyCreditCard';
+import { describeWalletError } from '../lib/wallet-error';
 
 type Dec = 'allow' | 'deny' | 'abstain';
 type ActiveChain = 46630 | 4663;
@@ -724,7 +725,7 @@ export function ConsolePage() {
         setWalletStatus(`${res.decision.toUpperCase()} → ${res.reason}`);
       }
     } catch (err) {
-      setWalletStatus(err instanceof Error ? err.message : String(err));
+      setWalletStatus(describeWalletError(err));
     } finally {
       setWalletBusy(false);
     }

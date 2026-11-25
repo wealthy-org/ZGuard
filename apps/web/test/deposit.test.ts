@@ -13,6 +13,7 @@ import {
   topUpWithUsdgDeposit,
   utf8ToHex,
 } from "../src/lib/deposit";
+import { describeWalletError } from "../src/lib/wallet-error";
 
 const WALLET = "0x1111111111111111111111111111111111111111";
 const PAY_TO = "0x141DB8c1C42B0fa5b13eE17136e4E037597886a8";
@@ -35,14 +36,17 @@ function config(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function harness(opts: { cfg?: unknown; receiptStatus?: string; registerReplies?: Array<{ status: number; body: unknown }> } = {}) {
+function harness(opts: { cfg?: unknown; receiptStatus?: string; balance?: bigint; rpcDown?: boolean; registerReplies?: Array<{ status: number; body: unknown }> } = {}) {
   const calls: Array<{ method: string; params?: unknown[] }> = [];
   const fetches: Array<{ url: string; init?: RequestInit }> = [];
   let head = 100n;
   const provider = {
     async request(args: { method: string; params?: unknown[] }) {
       calls.push(args);
+      if (opts.rpcDown) throw { code: -32603, message: "Failed to fetch" }; // MetaMask-style plain object
       switch (args.method) {
+        case "eth_call":
+          return "0x" + (opts.balance ?? 10_000_000n).toString(16).padStart(64, "0");
         case "eth_sendTransaction":
           return TX;
         case "personal_sign":
@@ -95,12 +99,12 @@ describe("[deposit-ui] browser USDG top-up", () => {
     assert.equal(res.apiKey, "zg_live_paid");
     assert.equal(res.txHash, TX);
     const methods = h.calls.map((c) => c.method);
-    assert.deepEqual(methods.slice(0, 3), ["eth_sendTransaction", "personal_sign", "eth_getTransactionReceipt"]);
-    const tx = (h.calls[0].params as Array<Record<string, string>>)[0];
+    assert.deepEqual(methods.slice(0, 4), ["eth_call", "eth_sendTransaction", "personal_sign", "eth_getTransactionReceipt"]);
+    const tx = (h.calls[1].params as Array<Record<string, string>>)[0];
     assert.equal(tx.to, USDG);
     assert.equal(tx.from, WALLET);
     assert.equal(tx.data, encodeErc20Transfer(PAY_TO, 100000n));
-    assert.deepEqual(h.calls[1].params, [utf8ToHex(sdkClaimMessage(TX, 46630)), WALLET]);
+    assert.deepEqual(h.calls[2].params, [utf8ToHex(sdkClaimMessage(TX, 46630)), WALLET]);
     const reg = h.fetches.find((f) => f.url === "/v1/register")!;
     const xp = JSON.parse((reg.init!.headers as Record<string, string>)["X-PAYMENT"]);
     assert.deepEqual(xp, { network: "eip155:46630", payload: { txHash: TX, claimSignature: SIG } });
@@ -128,6 +132,30 @@ describe("[deposit-ui] browser USDG top-up", () => {
       /switch to 46630/
     );
     assert.equal(h.calls.length, 0);
+  });
+
+  it("not enough USDG: stops after the balance read, no transfer popup", async () => {
+    const h = harness({ balance: 50_000n });
+    await assert.rejects(
+      topUpWithUsdgDeposit({ provider: h.provider, walletAddress: WALLET, walletChainId: 46630, amountMicro: 100_000n, fetchImpl: h.fetchImpl }),
+      /holds 0\.05 USDG.*0\.1 USDG needed/
+    );
+    assert.deepEqual(h.calls.map((c) => c.method), ["eth_call"]);
+  });
+
+  it("wallet RPC unreachable: readable message instead of [object Object]", async () => {
+    const h = harness({ rpcDown: true });
+    let caught: unknown;
+    try {
+      await topUpWithUsdgDeposit({ provider: h.provider, walletAddress: WALLET, walletChainId: 46630, amountMicro: 1n, fetchImpl: h.fetchImpl });
+    } catch (err) {
+      caught = err;
+    }
+    const text = describeWalletError(caught);
+    assert.doesNotMatch(text, /object Object/);
+    assert.match(text, /could not reach the chain RPC/);
+    assert.equal(describeWalletError({ code: 4001, message: "User rejected the request." }), "Rejected in wallet.");
+    assert.match(describeWalletError({ code: -32000, message: "execution reverted: transfer amount exceeds balance" }), /not enough USDG/);
   });
 
   it("reverted transfer never claims", async () => {

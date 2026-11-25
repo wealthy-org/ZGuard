@@ -4,10 +4,12 @@ import { useState } from 'react';
 import { CircleDollarSign, ExternalLink, Loader2 } from 'lucide-react';
 import { RHC_CHAIN_PARAMS, getProvider, useWallet } from '../lib/wallet';
 import { setSavedApiKey } from '../lib/zguard-api';
+import { describeWalletError } from '../lib/wallet-error';
 import { formatMicroUsdg, parseUsdgToMicro, topUpWithUsdgDeposit, type DepositStep } from '../lib/deposit';
 
 const STEP_LABEL: Record<DepositStep, string> = {
   config: 'Reading payment rails from /v1/config…',
+  balance: 'Checking your USDG balance…',
   transfer: 'Confirm the USDG transfer in your wallet…',
   sign: 'Sign the credit-claim message in your wallet (no gas)…',
   mined: 'Transfer mined, waiting for confirmations…',
@@ -53,7 +55,7 @@ export function BuyCreditCard({ chainId }: { chainId: 46630 | 4663 }) {
       });
       setStatus(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(describeWalletError(err));
       setStatus(null);
     } finally {
       setBusy(false);

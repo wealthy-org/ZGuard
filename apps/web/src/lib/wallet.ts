@@ -11,6 +11,7 @@
  *   wallet to switch, and wallet-side chain changes are reflected back.
  */
 import { useSyncExternalStore } from "react";
+import { describeWalletError } from "./wallet-error";
 
 export type RhcChainId = 46630 | 4663;
 
@@ -94,13 +95,13 @@ async function switchWalletChain(eth: Eip1193Provider, target: RhcChainId): Prom
     set({ walletChainId: target, error: null });
   } catch (err: unknown) {
     const code = (err as { code?: number })?.code;
-    if (code === 4902 || String(err).includes("4902") || String(err).includes("Unrecognized")) {
+    if (code === 4902 || describeWalletError(err).includes("4902") || /unrecognized/i.test(describeWalletError(err))) {
       throw new Error(
         `Your wallet does not know ${p.name}. Add it manually: chainId ${target} (${p.hex}), RPC ${p.rpc}, explorer ${p.explorer}.`
       );
     }
     if (code === 4001) throw new Error("Network switch rejected in wallet.");
-    throw err instanceof Error ? err : new Error(String(err));
+    throw err instanceof Error ? err : new Error(describeWalletError(err));
   }
 }
 
@@ -121,7 +122,7 @@ export async function connectWallet(target?: RhcChainId): Promise<void> {
     await switchWalletChain(eth, chain);
   } catch (err) {
     const code = (err as { code?: number })?.code;
-    set({ error: code === 4001 ? "Connection rejected in wallet." : err instanceof Error ? err.message : String(err) });
+    set({ error: code === 4001 ? "Connection rejected in wallet." : describeWalletError(err) });
   } finally {
     set({ connecting: false });
   }
@@ -135,7 +136,7 @@ export async function selectChain(chain: RhcChainId): Promise<void> {
     try {
       await switchWalletChain(eth, chain);
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : String(err) });
+      set({ error: describeWalletError(err) });
     }
   }
 }

@@ -20,6 +20,7 @@ export interface DepositRails {
 
 export type DepositStep =
   | "config"
+  | "balance"
   | "transfer"
   | "sign"
   | "mined"
@@ -127,6 +128,22 @@ export async function topUpWithUsdgDeposit(params: {
   const rails = railsFromConfig((await cfgResp.json()) as Record<string, unknown>);
   if (params.walletChainId !== rails.chainId) {
     throw new Error(`Wallet is on chain ${params.walletChainId ?? "?"}; switch to ${rails.chainId} first`);
+  }
+
+  // Pre-flight through the wallet's own RPC: catches "no USDG" and "wallet cannot reach the RPC" before any popup.
+  step("balance");
+  const balHex = String(
+    await eth.request({
+      method: "eth_call",
+      params: [{ to: rails.usdgAddress, data: `0x70a08231${params.walletAddress.slice(2).toLowerCase().padStart(64, "0")}` }, "latest"],
+    })
+  );
+  const balance = /^0x[0-9a-fA-F]*$/.test(balHex) && balHex.length > 2 ? BigInt(balHex) : 0n;
+  if (balance < params.amountMicro) {
+    throw new Error(
+      `This wallet holds ${formatMicroUsdg(balance)} USDG on chain ${rails.chainId}; ${formatMicroUsdg(params.amountMicro)} USDG needed. ` +
+        `Send USDG (${rails.usdgAddress}) to ${params.walletAddress} first.`
+    );
   }
 
   step("transfer", `${formatMicroUsdg(params.amountMicro)} USDG → ${rails.payTo}`);
