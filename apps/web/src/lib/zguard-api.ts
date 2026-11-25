@@ -23,7 +23,7 @@ export interface RuntimeConfigSummary {
   } | null;
 }
 
-export interface TenantBalanceInfo { 
+export interface TenantBalanceInfo {
   tenantId: string;
   apiKeyHint: string;
   creditMicroUsdg: string;
@@ -241,7 +241,8 @@ export async function pollZkAttestation(
     );
     if (resp && resp.ok) {
       const att = (await resp.json()) as Record<string, unknown>;
-      if (att.status === "proven" || att.status === "verified" || att.status === "failed") {
+      // Settled, or the server recorded why it stays pending (e.g. no SP1 prover configured).
+      if (att.status === "proven" || att.status === "verified" || att.status === "failed" || typeof att.note === "string") {
         return att;
       }
       if (i === maxAttempts - 1) return att;
@@ -251,60 +252,7 @@ export async function pollZkAttestation(
   return null;
 }
 
-/**
- * Connects browser wallet (MetaMask / Rabby / Robinhood Wallet) and switches/adds
- * Robinhood Chain Testnet (46630 / 0xb626) or Mainnet (4663 / 0x1237) for zero-fee testing.
- */
-export async function connectBrowserWalletToRhc(targetChainId: 46630 | 4663 = 46630): Promise<{
-  address: string;
-  chainId: number;
-}> {
-  const eth = getInjectedProvider();
-  if (!eth) {
-    throw new Error("No EIP-1193 browser wallet detected (install MetaMask, Rabby, or Robinhood Wallet).");
-  }
-
-  const accounts = (await eth.request({ method: "eth_requestAccounts" })) as string[];
-  if (!accounts || accounts.length === 0) {
-    throw new Error("Wallet returned no accounts.");
-  }
-
-  const hexChainId = targetChainId === 46630 ? "0xb626" : "0x1237";
-  try {
-    await eth.request({
-      method: "wallet_switchEthereumChain",
-      params: [{ chainId: hexChainId }],
-    });
-  } catch (err: unknown) {
-    const code = (err as { code?: number })?.code;
-    if (code === 4902 || String(err).includes("4902") || String(err).includes("Unrecognized")) {
-      await eth.request({
-        method: "wallet_addEthereumChain",
-        params: [
-          targetChainId === 46630
-            ? {
-                chainId: "0xb626",
-                chainName: "Robinhood Chain Testnet",
-                nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-                rpcUrls: ["https://rpc.testnet.chain.robinhood.com"],
-                blockExplorerUrls: ["https://explorer.testnet.chain.robinhood.com"],
-              }
-            : {
-                chainId: "0x1237",
-                chainName: "Robinhood Chain",
-                nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-                rpcUrls: ["https://rpc.mainnet.chain.robinhood.com"],
-                blockExplorerUrls: ["https://robinhoodchain.blockscout.com"],
-              },
-        ],
-      });
-    } else {
-      throw err;
-    }
-  }
-
-  return { address: accounts[0], chainId: targetChainId };
-}
+// Wallet connection lives in ./wallet.ts (shared store; eth_requestAccounts + wallet_switchEthereumChain only).
 
 /**
  * Executes an end-to-end guarded browser wallet EIP-712 signature on RHC Testnet (46630) with ZERO gas fees:
