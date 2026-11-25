@@ -118,9 +118,9 @@ export function computePayloadHash(
  * Computes deterministic commitment hashes for ZK publicInputs (§8.3) so raw intent/quote
  * parameters remain private off-chain while commitments are bound on-chain.
  */
-export function computeQuoteAndTxCommitments(
+export function canonicalQuoteAndTxJson(
   input: Pick<GuardRequest, "network" | "quote" | "payload">
-): { quoteHash: `0x${string}`; txHash: `0x${string}` } {
+): { quoteJson: string; txJson: string } {
   const quoteCanonical = canonicalizeValue({
     network: normalizeHexOrString(input.network ?? ""),
     quote: pickCanonicalQuote(input.quote),
@@ -130,8 +130,16 @@ export function computeQuoteAndTxCommitments(
     network: normalizeHexOrString(input.network ?? ""),
     payload: pickCanonicalPayload(input.payload),
   });
+  return { quoteJson: JSON.stringify(quoteCanonical), txJson: JSON.stringify(txCanonical) };
+}
+
+/** quoteHash/txHash = keccak256(utf8(canonical JSON)). The SP1 guest hashes the same bytes (zk/quote-rules). */
+export function computeQuoteAndTxCommitments(
+  input: Pick<GuardRequest, "network" | "quote" | "payload">
+): { quoteHash: `0x${string}`; txHash: `0x${string}` } {
+  const { quoteJson, txJson } = canonicalQuoteAndTxJson(input);
   return {
-    quoteHash: keccak256(toHex(JSON.stringify(quoteCanonical))),
-    txHash: keccak256(toHex(JSON.stringify(txCanonical))),
+    quoteHash: keccak256(toHex(quoteJson)),
+    txHash: keccak256(toHex(txJson)),
   };
 }

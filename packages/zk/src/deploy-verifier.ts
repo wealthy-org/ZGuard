@@ -22,9 +22,8 @@ import {
 import {
   ZGUARD_VERIFIER_ABI,
   ZGUARD_VERIFIER_BYTECODE,
-  buildInitialZkAttestation,
   getProgramVKey,
-  proveQuoteAttestationAsync,
+  isPlaceholderProgramVKey,
 } from "./index.js";
 
 function loadRootEnv(): string {
@@ -51,6 +50,11 @@ async function main() {
   const rootEnvPath = loadRootEnv();
   const chainId = Number(process.env.ZGUARD_ACTIVE_CHAIN_ID || RHC_TESTNET_CHAIN_ID);
   const isMainnet = chainId === 4663;
+  if (isMainnet) {
+    // Gap C7 / Bagian L: this project stays on Testnet 46630 until an audit + multisig owner exist.
+    console.error("[ZGuard ZK Deploy] Mainnet 4663 deploys are disabled (testnet-only decision, gap L).");
+    process.exit(1);
+  }
   const rpcUrl = isMainnet
     ? process.env.ZGUARD_RHC_MAINNET_RPC_URL || RHC_PUBLIC_RPC_MAINNET
     : process.env.ZGUARD_RHC_RPC_URL || RHC_PUBLIC_RPC_TESTNET;
@@ -89,11 +93,20 @@ async function main() {
     process.exit(1);
   }
 
-  const vkey = getProgramVKey("groth16-sp1");
+  const gateway = (process.env.ZGUARD_ZK_SP1_GATEWAY || "0x0000000000000000000000000000000000000000").trim() as Hex;
+  const vkeyEnv = (process.env.ZGUARD_ZK_SP1_PROGRAM_VKEY || "").trim();
+  const vkey = getProgramVKey("groth16-sp1", vkeyEnv || null);
+  if (!/^0x[0-9a-fA-F]{40}$/.test(gateway) || /^0x0{40}$/.test(gateway) || isPlaceholderProgramVKey("groth16-sp1", vkey)) {
+    console.warn(
+      "[ZGuard ZK Deploy] WARNING: ZGUARD_ZK_SP1_GATEWAY and/or ZGUARD_ZK_SP1_PROGRAM_VKEY not set.\n" +
+        "  The verifier will deploy but every proof will revert (NotConfigured / invalid) until the owner\n" +
+        "  calls proposeGatewayAndVKey(...) and, after the 2-day timelock, applyGatewayAndVKey()."
+    );
+  }
   const deployHash = await walletClient.deployContract({
     abi: ZGUARD_VERIFIER_ABI,
     bytecode: ZGUARD_VERIFIER_BYTECODE,
-    args: ["0x0000000000000000000000000000000000000000", vkey],
+    args: [gateway, vkey],
   });
   console.log(`[ZGuard ZK Deploy] Deploying ZGuardQuoteVerifier... tx: ${explorer}/tx/${deployHash}`);
   const deployReceipt = await publicClient.waitForTransactionReceipt({ hash: deployHash });
@@ -101,63 +114,9 @@ async function main() {
   console.log(
     `[ZGuard ZK Deploy] Deployed ZGuardQuoteVerifier at ${verifierAddress} (gasUsed=${deployReceipt.gasUsed.toString()})`
   );
-
-  // Verify §9 #10 Fixture A (allow) & Fixture B (deny Q-001) on-chain!
-  const usdgAddr = RHC_TESTNET_ASSETS.USDG.address;
-  const fixtureA = buildInitialZkAttestation({
-    decisionId: `dec_fixture_allow_${Date.now()}`,
-    system: "groth16-sp1",
-    request: {
-      network: `eip155:${chainId}`,
-      quote: { asset: usdgAddr, payTo: account.address, amount: "15000", chainId },
-      payload: {
-        type: "eip3009",
-        authorization: { from: account.address, to: account.address, value: "15000" },
-      },
-    },
-    quoteVerdict: "allow",
-    quoteCodes: [],
-    verifierAddress,
-  });
-
-  const provenA = await proveQuoteAttestationAsync(fixtureA, {
-    rpcUrl,
-    chainId,
-    verifierAddress,
-    verifierPrivateKey: pk,
-  });
   console.log(
-    `[ZGuard ZK Deploy] Fixture A (allow) verified on-chain: ${explorer}/tx/${provenA.verifyTx} (gasUsed=${provenA.verifierGasUsed})`
-  );
-
-  const fixtureB = buildInitialZkAttestation({
-    decisionId: `dec_fixture_deny_q001_${Date.now()}`,
-    system: "groth16-sp1",
-    request: {
-      network: `eip155:${chainId}`,
-      quote: { asset: usdgAddr, payTo: account.address, amount: "15000", chainId },
-      payload: {
-        type: "eip3009",
-        authorization: {
-          from: account.address,
-          to: "0x000000000000000000000000000000000000beef",
-          value: "15000",
-        },
-      },
-    },
-    quoteVerdict: "deny",
-    quoteCodes: ["Q-001"],
-    verifierAddress,
-  });
-
-  const provenB = await proveQuoteAttestationAsync(fixtureB, {
-    rpcUrl,
-    chainId,
-    verifierAddress,
-    verifierPrivateKey: pk,
-  });
-  console.log(
-    `[ZGuard ZK Deploy] Fixture B (deny Q-001) verified on-chain: ${explorer}/tx/${provenB.verifyTx} (gasUsed=${provenB.verifierGasUsed})`
+    "[ZGuard ZK Deploy] No fixture is marked verified here: an attestation only becomes verified when a real SP1\n" +
+      "  proof from ZGUARD_ZK_SP1_PROVER_URL passes verifySp1QuoteProof. Transfer ownership to a multisig next."
   );
 
   // Persist ZGUARD_ZK_VERIFIER_ADDRESS to root .env if file exists

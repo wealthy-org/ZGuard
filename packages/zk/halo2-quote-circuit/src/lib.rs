@@ -1,3 +1,7 @@
+//! STATUS: SKELETON ONLY (gap C2). This circuit is not wired into the API, has no prover, no verifier
+//! contract and no tests. Its commitments are NOT the keccak(canonical JSON) commitments used by ZGuard
+//! attestations, so nothing produced here can be checked onchain. Do not describe Halo2 as available.
+//!
 //! Hand-written Halo2-KZG circuit for ZGuard quote-match (§8.3 Path 2).
 //! Compares (payTo, amount, asset, chainId) against the 402 quote without a zkVM
 //! and exposes the exact same public input structure as Path 1 (Groth16-SP1):

@@ -1,7 +1,7 @@
 {
   "name": "@zguard/zk",
   "version": "0.1.0",
-  "description": "ZGuard ZK attestation layer (Groth16 BN254 + Halo2-KZG commitments, async prover, and RHC 4663 ecPairing verifier)",
+  "description": "ZGuard quote attestation layer: SP1 Groth16 verifier contract + async prover client (SP1 guest is a scaffold; Halo2 is a skeleton)",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",

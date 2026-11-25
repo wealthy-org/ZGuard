@@ -13,6 +13,7 @@ import {
 import { privateKeyToAccount } from "viem/accounts";
 import {
   RHC_PUBLIC_RPC_TESTNET,
+  canonicalQuoteAndTxJson,
   computeQuoteAndTxCommitments,
   type Decision,
   type GuardRequest,
@@ -31,29 +32,6 @@ export {
   ZGUARD_VERIFIER_BYTECODE,
   ZGUARD_VERIFIER_DEPLOYED_BYTECODE,
 };
-
-/**
- * BN254 scalar field modulus r (alt_bn128) and base field modulus q.
- */
-const BN254_SCALAR_R =
-  21888242871839275222246405745257275088548364400416034343698204186575808495617n;
-const BN254_BASE_Q =
-  21888242871839275222246405745257275088696311157297823662689037894645226208583n;
-
-// Standard BN254 G1 = (1, 2) and G2 generator coordinates (EIP-197 ordering: x_im, x_re, y_im, y_re)
-const G1_X = 1n;
-const G1_Y = 2n;
-const G2_X_IM =
-  11559732032986387107991004021392285783925812861821192530917403151452391805634n;
-const G2_X_RE =
-  10857046999023057135944570762232829481370756359578518086990519993285655852781n;
-const G2_Y_IM =
-  4082367875863433681332203403145435568316851327593401208105741076214120093531n;
-const G2_Y_RE =
-  8495653923123431417604973247489272438418190587263600148770280649306958101930n;
-
-const DRY_RUN_VERIFIER_SLOT_ADDR =
-  "0x0000000000000000000000000000000000466301" as const;
 
 const RULE_CODE_BITS: Partial<Record<ReasonCode, number>> = {
   "Q-001": 1 << 0,
@@ -80,12 +58,22 @@ export function encodeRuleBitmask(codes: ReasonCode[]): { numeric: number; hex: 
   };
 }
 
-function pad32(n: bigint): string {
-  return n.toString(16).padStart(64, "0");
+/**
+ * PLACEHOLDER until `cargo prove build` + `vkey` produce the real SP1 program verification key.
+ * Set ZGUARD_ZK_SP1_PROGRAM_VKEY (passed via `programVKeyOverride`) once the guest is built.
+ */
+export const PLACEHOLDER_PROGRAM_VKEY_NOTE =
+  "placeholder vkey = keccak256('zguard:quote-verifier:v1:<system>'); not a real SP1 program vkey";
+
+export function getProgramVKey(system: ZkSystemId, programVKeyOverride?: string | null): `0x${string}` {
+  if (programVKeyOverride && /^0x[0-9a-fA-F]{64}$/.test(programVKeyOverride)) {
+    return programVKeyOverride.toLowerCase() as `0x${string}`;
+  }
+  return keccak256(toHex(`zguard:quote-verifier:v1:${system}`));
 }
 
-export function getProgramVKey(system: ZkSystemId): `0x${string}` {
-  return keccak256(toHex(`zguard:quote-verifier:v1:${system}`));
+export function isPlaceholderProgramVKey(system: ZkSystemId, vkey: string): boolean {
+  return vkey.toLowerCase() === keccak256(toHex(`zguard:quote-verifier:v1:${system}`)).toLowerCase();
 }
 
 export function encodeQuotePublicValues(attestation: Pick<ZkAttestation, "publicInputs">): Hex {
@@ -114,6 +102,24 @@ export function encodeQuotePublicValues(attestation: Pick<ZkAttestation, "public
   );
 }
 
+/** Builds the SP1 guest input (canonical JSON + private hints) for a quote verdict. */
+export function buildSp1GuestInput(
+  request: Pick<GuardRequest, "network" | "quote" | "payload">,
+  quoteCodes: ReasonCode[]
+): { quoteJson: string; txJson: string; hints: Record<string, boolean> } {
+  const { quoteJson, txJson } = canonicalQuoteAndTxJson(request);
+  return {
+    quoteJson,
+    txJson,
+    hints: {
+      asset_mismatch: quoteCodes.includes("Q-003"),
+      chain_mismatch: quoteCodes.includes("Q-004"),
+      unexpected_approval: quoteCodes.includes("Q-006"),
+      domain_verified: !quoteCodes.includes("Q-007"),
+    },
+  };
+}
+
 export interface ZkProverOptions {
   rpcUrl?: string;
   chainId?: number;
@@ -121,6 +127,8 @@ export interface ZkProverOptions {
   verifierAddress?: string;
   /** Optional funded relayer private key (e.g. Testnet 46630 faucet wallet) to broadcast `verifyTx` on-chain */
   verifierPrivateKey?: string;
+  /** Canonical JSON + hints for the SP1 guest (from `canonicalQuoteAndTxJson`). */
+  guestInput?: { quoteJson: string; txJson: string; hints?: Record<string, boolean> } | null;
   onUpdated?: (attestation: ZkAttestation) => Promise<void> | void;
   webhookUrl?: string;
 }
@@ -137,6 +145,7 @@ export function buildInitialZkAttestation(params: {
   quoteVerdict: Decision;
   quoteCodes: ReasonCode[];
   verifierAddress?: string | null;
+  programVKeyOverride?: string | null;
 }): ZkAttestation {
   const { quoteHash, txHash } = computeQuoteAndTxCommitments(params.request);
   const quoteOnlyCodes = params.quoteCodes.filter(
@@ -148,7 +157,7 @@ export function buildInitialZkAttestation(params: {
     decisionId: params.decisionId,
     system: params.system,
     scope: "quote", // §8.3: NEVER anything other than "quote"
-    programVKey: getProgramVKey(params.system),
+    programVKey: getProgramVKey(params.system, params.programVKeyOverride),
     proof: null,
     publicInputs: {
       quoteHash,
@@ -168,248 +177,161 @@ export function buildInitialZkAttestation(params: {
 }
 
 /**
- * Executes asynchronous BN254 proof generation & live Robinhood Chain (Testnet 46630 / Mainnet 4663)
- * verification against both EVM BN254 precompiles (`0x07`/`0x08`) AND the compiled `ZGuardQuoteVerifier.sol`
- * contract (§8.3 & §9 #10), measuring exact on-chain verifier gas and broadcasting `verifyTx` when a
- * funded relayer key + `verifierAddress` are configured.
+ * Asynchronous SP1 proof settlement (gap C1/C9 — honest semantics):
+ *
+ *  - No `sp1ProverUrl`  -> attestation stays `pending` with a note. Nothing is claimed proven.
+ *  - Prover returns `{ proof, publicValues }`. publicValues MUST equal the values ZGuard committed to,
+ *    otherwise `failed`.
+ *  - `verifierAddress` set -> `checkSp1QuoteProof` eth_call (the SP1 gateway performs the BN254
+ *    pairing). Success -> `proven`. Revert -> `failed`.
+ *  - `verifierPrivateKey` set as well -> broadcast `verifySp1QuoteProof`; a successful receipt is the
+ *    ONLY way to reach `verified`. A remote prover's own claim of "verified" is ignored.
+ *  - Proof received but no verifier configured -> stays `pending` (proof attached, unverified).
+ *
+ * The former "Path B" (e(P,G2)·e(-P,G2) == 1, true for every P) was removed: it proved nothing.
  */
 export async function proveQuoteAttestationAsync(
   initial: ZkAttestation,
   opts: ZkProverOptions = {}
 ): Promise<ZkAttestation> {
   const rpcUrl = opts.rpcUrl ?? RHC_PUBLIC_RPC_TESTNET;
-  const client = createPublicClient({ transport: http(rpcUrl, { timeout: 12_000 }) });
-
-  try {
-    // Path A: Remote SP1 Prover Cluster if configured in open config
-    if (opts.sp1ProverUrl) {
-      const resp = await fetch(opts.sp1ProverUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          decisionId: initial.decisionId,
-          system: initial.system,
-          programVKey: initial.programVKey,
-          publicInputs: initial.publicInputs,
-        }),
-        signal: AbortSignal.timeout(30_000),
-      });
-      if (resp.ok) {
-        const remote = (await resp.json()) as {
-          proof: `0x${string}`;
-          verifyTx?: `0x${string}` | null;
-          verifierGasUsed?: string | null;
-          status?: "proven" | "verified";
-        };
-        const updated: ZkAttestation = {
-          ...initial,
-          scope: "quote",
-          proof: remote.proof,
-          verifyTx: remote.verifyTx ?? null,
-          verifierGasUsed: remote.verifierGasUsed ?? null,
-          bn254PrecompileVerified: true,
-          status: remote.verifyTx ? "verified" : (remote.status ?? "proven"),
-          updatedAt: new Date().toISOString(),
-        };
-        await opts.onUpdated?.(updated);
-        return updated;
-      }
-    }
-
-    // Path B: BN254 commitment-bound proof + live RHC precompile 0x07/0x08 + ZGuardQuoteVerifier.sol execution
-    const encodedPublicValues = encodeQuotePublicValues(initial);
-    const publicInputScalar =
-      (BigInt(keccak256(encodedPublicValues)) % (BN254_SCALAR_R - 1n)) + 1n;
-
-    // 1. Call RHC precompile 0x07 (ecMul): P = publicInputScalar * G1
-    const ecMulCalldata = (`0x${pad32(G1_X)}${pad32(G1_Y)}${pad32(publicInputScalar)}`) as Hex;
-    const ecMulResult = await client.call({
-      to: "0x0000000000000000000000000000000000000007",
-      data: ecMulCalldata,
-    });
-
-    if (!ecMulResult.data || ecMulResult.data.length < 130) {
-      throw new Error("BN254 ecMul (0x07) returned invalid point on RHC");
-    }
-
-    const pX = BigInt(`0x${ecMulResult.data.slice(2, 66)}`);
-    const pY = BigInt(`0x${ecMulResult.data.slice(66, 130)}`);
-    const negPY = (BN254_BASE_Q - pY) % BN254_BASE_Q;
-
-    // 2. Call RHC precompile 0x08 (ecPairing): verify e(P, G2) * e(-P, G2) == 1
-    const pairingCalldata = (`0x` +
-      pad32(pX) +
-      pad32(pY) +
-      pad32(G2_X_IM) +
-      pad32(G2_X_RE) +
-      pad32(G2_Y_IM) +
-      pad32(G2_Y_RE) +
-      pad32(pX) +
-      pad32(negPY) +
-      pad32(G2_X_IM) +
-      pad32(G2_X_RE) +
-      pad32(G2_Y_IM) +
-      pad32(G2_Y_RE)) as Hex;
-
-    const pairingRes = await client.call({
-      to: "0x0000000000000000000000000000000000000008",
-      data: pairingCalldata,
-    });
-
-    const pairingOk = Boolean(pairingRes.data) && BigInt(pairingRes.data!) === 1n;
-    if (!pairingOk) {
-      throw new Error("BN254 ecPairing (0x08) check did not return 1 on RHC");
-    }
-
-    const proofEnvelope = encodeAbiParameters(
-      [
-        { type: "bytes32" },
-        { type: "uint256[2]" },
-        { type: "uint256[2][2]" },
-        { type: "uint256[2]" },
-        { type: "bytes32" },
-      ],
-      [
-        initial.programVKey as Hex,
-        [pX, pY],
-        [
-          [G2_X_IM, G2_X_RE],
-          [G2_Y_IM, G2_Y_RE],
-        ],
-        [pX, negPY],
-        keccak256(encodedPublicValues),
-      ]
-    );
-
-    const decisionBytes32 = keccak256(toHex(initial.decisionId));
-    const verifierCalldata = encodeFunctionData({
-      abi: ZGUARD_VERIFIER_ABI,
-      functionName: "verifyAndRecordCommitmentProof",
-      args: [decisionBytes32, encodedPublicValues, proofEnvelope, initial.system],
-    });
-
-    // 3. Measure exact Solidity verifier contract execution & gas on live RHC EVM (`eth_simulateV1`)
-    let verifierGasUsed: string | null = null;
-    const targetVerifier =
-      opts.verifierAddress && /^0x[0-9a-fA-F]{40}$/.test(opts.verifierAddress)
-        ? (opts.verifierAddress.toLowerCase() as Hex)
-        : DRY_RUN_VERIFIER_SLOT_ADDR;
-
-    try {
-      const simResp = await fetch(rpcUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method: "eth_simulateV1",
-          params: [
-            {
-              blockStateCalls: [
-                {
-                  calls: [
-                    {
-                      from: "0x0000000000000000000000000000000000000001",
-                      to: targetVerifier,
-                      data: verifierCalldata,
-                    },
-                  ],
-                  ...(targetVerifier === DRY_RUN_VERIFIER_SLOT_ADDR
-                    ? {
-                        stateOverrides: {
-                          [DRY_RUN_VERIFIER_SLOT_ADDR]: {
-                            code: ZGUARD_VERIFIER_DEPLOYED_BYTECODE,
-                          },
-                        },
-                      }
-                    : {}),
-                },
-              ],
-              validation: false,
-            },
-            "latest",
-          ],
-        }),
-        signal: AbortSignal.timeout(10_000),
-      });
-      const simJson = (await simResp.json()) as {
-        result?: Array<{ calls?: Array<{ status?: string; gasUsed?: string }> }>;
-      };
-      const simCall = simJson.result?.[0]?.calls?.[0];
-      if (simCall?.status === "0x1" && simCall.gasUsed) {
-        verifierGasUsed = BigInt(simCall.gasUsed).toString();
-      }
-    } catch {
-      verifierGasUsed = null;
-    }
-
-    // 4. Optional live on-chain broadcast (`verifyTx`) when verifierAddress + verifierPrivateKey are configured
-    let verifyTx: string | null = null;
-    if (
-      opts.verifierAddress &&
-      /^0x[0-9a-fA-F]{40}$/.test(opts.verifierAddress) &&
-      opts.verifierPrivateKey &&
-      /^0x[0-9a-fA-F]{64}$/.test(opts.verifierPrivateKey)
-    ) {
-      try {
-        const detectedChainId = opts.chainId ?? (await client.getChainId());
-        const chainObj: Chain = defineChain({
-          id: detectedChainId,
-          name: detectedChainId === 4663 ? "Robinhood Chain" : "Robinhood Chain Testnet",
-          nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-          rpcUrls: { default: { http: [rpcUrl] } },
-        });
-        const account = privateKeyToAccount(opts.verifierPrivateKey as Hex);
-        const wallet = createWalletClient({
-          account,
-          chain: chainObj,
-          transport: http(rpcUrl, { timeout: 15_000 }),
-        });
-        const txHash = await wallet.sendTransaction({
-          to: opts.verifierAddress as Hex,
-          data: verifierCalldata,
-        });
-        const receipt = await client.waitForTransactionReceipt({ hash: txHash, timeout: 25_000 });
-        if (receipt.status === "success") {
-          verifyTx = txHash;
-          verifierGasUsed = receipt.gasUsed.toString();
-        }
-      } catch {
-        // Keep proof as "proven" if relayer has 0 gas
-      }
-    }
-
-    const updated: ZkAttestation = {
-      ...initial,
-      scope: "quote",
-      proof: proofEnvelope,
-      verifierAddress: opts.verifierAddress || initial.verifierAddress || null,
-      verifyTx,
-      bn254PrecompileVerified: true,
-      verifierGasUsed,
-      status: verifyTx ? "verified" : "proven",
-      updatedAt: new Date().toISOString(),
-    };
-
-    await opts.onUpdated?.(updated);
-
-    if (opts.webhookUrl) {
+  const now = () => new Date().toISOString();
+  const finish = async (att: ZkAttestation): Promise<ZkAttestation> => {
+    await opts.onUpdated?.(att);
+    if (opts.webhookUrl && (att.status === "proven" || att.status === "verified")) {
       fetch(opts.webhookUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ event: "attestation.zk.proven", attestation: updated }),
+        body: JSON.stringify({ event: `attestation.zk.${att.status}`, attestation: att }),
       }).catch(() => undefined);
     }
+    return att;
+  };
 
-    return updated;
-  } catch {
-    const failed: ZkAttestation = {
+  if (initial.system !== "groth16-sp1") {
+    return finish({
       ...initial,
       scope: "quote",
-      status: "failed",
-      updatedAt: new Date().toISOString(),
-    };
-    await opts.onUpdated?.(failed);
-    return failed;
+      status: "pending",
+      bn254PrecompileVerified: false,
+      note: `${initial.system} is a skeleton (no prover/verifier); nothing is claimed proven`,
+      updatedAt: now(),
+    });
   }
+
+  if (!opts.sp1ProverUrl) {
+    return finish({
+      ...initial,
+      scope: "quote",
+      status: "pending",
+      bn254PrecompileVerified: false,
+      note: "SP1 prover not configured (ZGUARD_ZK_SP1_PROVER_URL); no proof generated, nothing is claimed proven",
+      updatedAt: now(),
+    });
+  }
+
+  const expectedPublicValues = encodeQuotePublicValues(initial).toLowerCase();
+  const fail = (note: string) =>
+    finish({ ...initial, scope: "quote", status: "failed", bn254PrecompileVerified: false, note, updatedAt: now() });
+
+  let proof: Hex;
+  try {
+    const resp = await fetch(opts.sp1ProverUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        decisionId: initial.decisionId,
+        system: initial.system,
+        programVKey: initial.programVKey,
+        publicInputs: initial.publicInputs,
+        publicValues: expectedPublicValues,
+        // Guest inputs: see packages/zk/sp1-quote-guest/src/main.rs
+        guestInput: opts.guestInput ?? null,
+      }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!resp.ok) return fail(`SP1 prover returned HTTP ${resp.status}`);
+    const remote = (await resp.json()) as { proof?: string; publicValues?: string };
+    if (!remote.proof || !/^0x([0-9a-fA-F]{2})+$/.test(remote.proof)) return fail("SP1 prover returned no proof bytes");
+    if (!remote.publicValues || remote.publicValues.toLowerCase() !== expectedPublicValues) {
+      return fail("SP1 prover publicValues do not match the committed quote verdict");
+    }
+    proof = remote.proof as Hex;
+  } catch (err) {
+    return fail(`SP1 prover unreachable: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  const verifier =
+    opts.verifierAddress && /^0x[0-9a-fA-F]{40}$/.test(opts.verifierAddress) ? (opts.verifierAddress as Hex) : null;
+  if (!verifier) {
+    return finish({
+      ...initial,
+      scope: "quote",
+      proof,
+      status: "pending",
+      bn254PrecompileVerified: false,
+      note: "Proof received but not verified: ZGUARD_ZK_VERIFIER_ADDRESS is not configured",
+      updatedAt: now(),
+    });
+  }
+
+  const client = createPublicClient({ transport: http(rpcUrl, { timeout: 12_000 }) });
+  try {
+    await client.readContract({
+      address: verifier,
+      abi: ZGUARD_VERIFIER_ABI,
+      functionName: "checkSp1QuoteProof",
+      args: [expectedPublicValues as Hex, proof],
+    });
+  } catch (err) {
+    return fail(`Verifier rejected proof: ${err instanceof Error ? err.message.split("\n")[0] : String(err)}`);
+  }
+
+  let verifyTx: string | null = null;
+  let verifierGasUsed: string | null = null;
+  let note = "Proof accepted by ZGuardQuoteVerifier.checkSp1QuoteProof (eth_call); not recorded onchain";
+  if (opts.verifierPrivateKey && /^0x[0-9a-fA-F]{64}$/.test(opts.verifierPrivateKey)) {
+    try {
+      const detectedChainId = opts.chainId ?? (await client.getChainId());
+      const chainObj: Chain = defineChain({
+        id: detectedChainId,
+        name: detectedChainId === 4663 ? "Robinhood Chain" : "Robinhood Chain Testnet",
+        nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+        rpcUrls: { default: { http: [rpcUrl] } },
+      });
+      const account = privateKeyToAccount(opts.verifierPrivateKey as Hex);
+      const wallet = createWalletClient({ account, chain: chainObj, transport: http(rpcUrl, { timeout: 15_000 }) });
+      const txHash = await wallet.sendTransaction({
+        to: verifier,
+        data: encodeFunctionData({
+          abi: ZGUARD_VERIFIER_ABI,
+          functionName: "verifySp1QuoteProof",
+          args: [keccak256(toHex(initial.decisionId)), expectedPublicValues as Hex, proof],
+        }),
+      });
+      const receipt = await client.waitForTransactionReceipt({ hash: txHash, timeout: 25_000 });
+      if (receipt.status === "success") {
+        verifyTx = txHash;
+        verifierGasUsed = receipt.gasUsed.toString();
+        note = "Proof verified and recorded onchain by verifySp1QuoteProof";
+      } else {
+        note = "verifySp1QuoteProof transaction reverted; attestation remains proven (eth_call) only";
+      }
+    } catch (err) {
+      note = `verifySp1QuoteProof broadcast failed (${err instanceof Error ? err.message.split("\n")[0] : String(err)}); proven via eth_call only`;
+    }
+  }
+
+  return finish({
+    ...initial,
+    scope: "quote",
+    proof,
+    verifierAddress: verifier,
+    verifyTx,
+    verifierGasUsed,
+    bn254PrecompileVerified: true,
+    status: verifyTx ? "verified" : "proven",
+    note,
+    updatedAt: now(),
+  });
 }

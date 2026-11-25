@@ -59,6 +59,7 @@ export const zkAttestationsTable = pgTable("zguard_zk_attestations", {
   verifyTx: text("verify_tx"),
   bn254PrecompileVerified: boolean("bn254_precompile_verified").notNull().default(false),
   status: text("status").$type<ZkAttestation["status"]>().notNull(),
+  note: text("note"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -85,4 +86,15 @@ export const tokenObservationsTable = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [primaryKey({ columns: [t.chainId, t.address] })]
+);
+
+/** Fixed-window rate-limit buckets (gap C5/C6); written with raw SQL in store.hitRateLimit. */
+export const rateLimitsTable = pgTable(
+  "zguard_rate_limits",
+  {
+    bucketKey: text("bucket_key").notNull(),
+    windowStart: bigint("window_start", { mode: "number" }).notNull(),
+    hits: integer("hits").notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.bucketKey, t.windowStart] })]
 );

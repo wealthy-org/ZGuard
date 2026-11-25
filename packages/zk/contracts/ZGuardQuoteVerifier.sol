@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 interface ISP1VerifierGateway {
+    /// @dev Reverts when the proof is invalid for (programVKey, publicValues).
     function verifyProof(
         bytes32 programVKey,
         bytes calldata publicValues,
@@ -11,26 +12,41 @@ interface ISP1VerifierGateway {
 
 /**
  * @title ZGuardQuoteVerifier
- * @notice On-chain verifier for ZGuard quote-match ZK attestations on Robinhood Chain (Testnet 46630 & Mainnet 4663).
- *         Supports:
- *           1. SP1 / RISC Zero Groth16 BN254 gateway delegation (`verifySp1QuoteProof`)
- *           2. Direct BN254 commitment + ecMul (0x07) & ecPairing (0x08) verification (`verifyAndRecordCommitmentProof`)
- *           3. Single-verdict and Merkle-batched verdict attestations (§8.3 & §10)
+ * @notice On-chain verifier for ZGuard quote-match attestations on Robinhood Chain Testnet 46630.
+ *
+ *         The ONLY way a decision becomes "verified" is a real SP1 Groth16 proof accepted by the Succinct
+ *         SP1 verifier gateway (`verifySp1QuoteProof`). There is deliberately no fallback path:
+ *         the previous `verifyAndRecordCommitmentProof` accepted `e(A,B)·e(-A,B) == 1`, which holds for
+ *         ANY point A and therefore proved nothing (gap C1). It has been removed.
+ *
  *         Scope is strictly locked to keccak256("quote") — simulation & token_risk are never claimed proven.
+ *
+ *         Governance (gap B3):
+ *           - two-step ownership transfer (the owner SHOULD be a multisig, never a hot EOA);
+ *           - gateway / program vkey changes are timelocked (CONFIG_DELAY) and announced by events;
+ *           - no owner-only "trust me" recording: batch roots are not supported until the guest program
+ *             proves batches (removed `recordVerifiedBatchRoot`).
  */
 contract ZGuardQuoteVerifier {
     bytes32 public constant QUOTE_SCOPE_HASH = keccak256("quote");
-    uint256 internal constant BN254_PRIME_Q =
-        21888242871839275222246405745257275088696311157297823662689037894645226208583;
-    uint256 internal constant BN254_SCALAR_R =
-        21888242871839275222246405745257275088548364400416034343698204186575808495617;
+    uint256 public constant CONFIG_DELAY = 2 days;
 
     address public owner;
+    address public pendingOwner;
     address public sp1Gateway;
     bytes32 public quoteProgramVKey;
 
+    struct PendingConfig {
+        address gateway;
+        bytes32 vkey;
+        uint64 eta;
+    }
+
+    PendingConfig public pendingConfig;
+
     mapping(bytes32 => bool) public verifiedDecisionIds;
-    mapping(bytes32 => bool) public verifiedBatchRoots;
+    /// @notice keccak256(publicValues) bound to each verified decisionId (first proof wins, no overwrite).
+    mapping(bytes32 => bytes32) public decisionPublicValuesHash;
 
     event QuoteVerdictVerified(
         bytes32 indexed decisionId,
@@ -40,17 +56,25 @@ contract ZGuardQuoteVerifier {
         uint32 ruleBitmask,
         string system
     );
-
-    event VerdictBatchVerified(bytes32 indexed batchMerkleRoot, uint256 count, string system);
+    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+    event ConfigProposed(address gateway, bytes32 vkey, uint64 eta);
+    event ConfigApplied(address gateway, bytes32 vkey);
+    event ConfigCancelled();
 
     error ScopeMustBeQuote();
-    error InvalidProof();
     error Unauthorized();
+    error NotConfigured();
+    error AlreadyVerified();
+    error TimelockActive(uint64 eta);
+    error NoPendingConfig();
 
     constructor(address _sp1Gateway, bytes32 _quoteProgramVKey) {
         owner = msg.sender;
         sp1Gateway = _sp1Gateway;
         quoteProgramVKey = _quoteProgramVKey;
+        emit OwnershipTransferred(address(0), msg.sender);
+        emit ConfigApplied(_sp1Gateway, _quoteProgramVKey);
     }
 
     modifier onlyOwner() {
@@ -58,19 +82,58 @@ contract ZGuardQuoteVerifier {
         _;
     }
 
-    function setGatewayAndVKey(address _gateway, bytes32 _vkey) external onlyOwner {
-        sp1Gateway = _gateway;
-        quoteProgramVKey = _vkey;
+    // ------------------------------------------------------------------ ownership (two-step)
+
+    function transferOwnership(address newOwner) external onlyOwner {
+        pendingOwner = newOwner;
+        emit OwnershipTransferStarted(owner, newOwner);
     }
 
+    function acceptOwnership() external {
+        if (msg.sender != pendingOwner) revert Unauthorized();
+        emit OwnershipTransferred(owner, msg.sender);
+        owner = msg.sender;
+        pendingOwner = address(0);
+    }
+
+    // ------------------------------------------------------------------ timelocked configuration
+
+    function proposeGatewayAndVKey(address _gateway, bytes32 _vkey) external onlyOwner {
+        uint64 eta = uint64(block.timestamp + CONFIG_DELAY);
+        pendingConfig = PendingConfig({gateway: _gateway, vkey: _vkey, eta: eta});
+        emit ConfigProposed(_gateway, _vkey, eta);
+    }
+
+    function applyGatewayAndVKey() external onlyOwner {
+        PendingConfig memory p = pendingConfig;
+        if (p.eta == 0) revert NoPendingConfig();
+        if (block.timestamp < p.eta) revert TimelockActive(p.eta);
+        sp1Gateway = p.gateway;
+        quoteProgramVKey = p.vkey;
+        delete pendingConfig;
+        emit ConfigApplied(p.gateway, p.vkey);
+    }
+
+    function cancelGatewayAndVKey() external onlyOwner {
+        delete pendingConfig;
+        emit ConfigCancelled();
+    }
+
+    // ------------------------------------------------------------------ verification
+
     /**
-     * @notice Verifies an SP1 Groth16 quote-match proof via the Succinct gateway and records the attested decisionId.
+     * @notice Verifies an SP1 Groth16 quote-match proof via the SP1 verifier gateway and records the decisionId.
+     * @dev publicValues = abi.encode(bytes32 scopeHash, bytes32 quoteHash, bytes32 txHash, uint8 verdict, uint32 ruleBitmask)
+     *      — exactly what the SP1 guest commits. Reverts on an invalid proof (gateway reverts) or missing config.
      */
     function verifySp1QuoteProof(
         bytes32 decisionId,
         bytes calldata publicValues,
         bytes calldata proofBytes
     ) external returns (bool) {
+        if (sp1Gateway == address(0) || quoteProgramVKey == bytes32(0)) revert NotConfigured();
+        if (verifiedDecisionIds[decisionId]) revert AlreadyVerified();
+
         (
             bytes32 scopeHash,
             bytes32 quoteHash,
@@ -84,92 +147,20 @@ contract ZGuardQuoteVerifier {
         ISP1VerifierGateway(sp1Gateway).verifyProof(quoteProgramVKey, publicValues, proofBytes);
 
         verifiedDecisionIds[decisionId] = true;
+        decisionPublicValuesHash[decisionId] = keccak256(publicValues);
         emit QuoteVerdictVerified(decisionId, quoteHash, txHash, verdict, ruleBitmask, "groth16-sp1");
         return true;
     }
 
     /**
-     * @notice Verifies a ZGuard BN254 commitment-bound pairing proof directly via RHC precompiles 0x07 (ecMul) & 0x08 (ecPairing),
-     *         confirming that point A matches scalar(keccak256(publicValues)) * G1 and satisfies e(A, B) * e(-A, B) == 1,
-     *         then records `verifiedDecisionIds[decisionId] = true` and emits `QuoteVerdictVerified`.
+     * @notice Read-only check: does the gateway accept this proof? Reverts on invalid proof / missing config.
+     *         Used by the API (eth_call) to move an attestation to "proven" without spending gas.
      */
-    function verifyAndRecordCommitmentProof(
-        bytes32 decisionId,
-        bytes calldata publicValues,
-        bytes calldata proofEnvelope,
-        string calldata system
-    ) external returns (bool) {
-        {
-            bytes32 expectedDigest = keccak256(publicValues);
-            (
-                ,
-                uint256[2] memory a,
-                uint256[2][2] memory b,
-                uint256[2] memory negA,
-                bytes32 pubDigest
-            ) = abi.decode(proofEnvelope, (bytes32, uint256[2], uint256[2][2], uint256[2], bytes32));
-
-            if (pubDigest != expectedDigest) revert InvalidProof();
-
-            uint256 scalar = (uint256(expectedDigest) % (BN254_SCALAR_R - 1)) + 1;
-            uint256[3] memory mulIn = [uint256(1), uint256(2), scalar];
-            uint256[2] memory mulOut;
-            bool mulOk;
-            assembly {
-                mulOk := staticcall(sub(gas(), 2000), 7, mulIn, 96, mulOut, 64)
-            }
-            if (!mulOk || mulOut[0] != a[0] || mulOut[1] != a[1]) revert InvalidProof();
-
-            if (!verifyBn254PairingEquation(a, b, negA, b)) revert InvalidProof();
-        }
-
-        (
-            bytes32 scopeHash,
-            bytes32 quoteHash,
-            bytes32 txHash,
-            uint8 verdict,
-            uint32 ruleBitmask
-        ) = abi.decode(publicValues, (bytes32, bytes32, bytes32, uint8, uint32));
-
+    function checkSp1QuoteProof(bytes calldata publicValues, bytes calldata proofBytes) external view returns (bool) {
+        if (sp1Gateway == address(0) || quoteProgramVKey == bytes32(0)) revert NotConfigured();
+        (bytes32 scopeHash, , , , ) = abi.decode(publicValues, (bytes32, bytes32, bytes32, uint8, uint32));
         if (scopeHash != QUOTE_SCOPE_HASH) revert ScopeMustBeQuote();
-
-        verifiedDecisionIds[decisionId] = true;
-        emit QuoteVerdictVerified(decisionId, quoteHash, txHash, verdict, ruleBitmask, system);
+        ISP1VerifierGateway(sp1Gateway).verifyProof(quoteProgramVKey, publicValues, proofBytes);
         return true;
-    }
-
-    /**
-     * @notice Direct BN254 pairing check e(A, B) * e(negC, D) == 1 using precompile 0x08 on RHC 4663 / 46630.
-     */
-    function verifyBn254PairingEquation(
-        uint256[2] memory a,
-        uint256[2][2] memory b,
-        uint256[2] memory negC,
-        uint256[2][2] memory d
-    ) public view returns (bool ok) {
-        if (a[0] >= BN254_PRIME_Q || a[1] >= BN254_PRIME_Q) revert InvalidProof();
-        uint256[12] memory input = [
-            a[0], a[1],
-            b[0][0], b[0][1], b[1][0], b[1][1],
-            negC[0], negC[1],
-            d[0][0], d[0][1], d[1][0], d[1][1]
-        ];
-        uint256[1] memory out;
-        assembly {
-            ok := staticcall(sub(gas(), 2000), 8, input, 384, out, 32)
-        }
-        return ok && out[0] == 1;
-    }
-
-    /**
-     * @notice Batch Merkle root registration after off-chain/gateway proof verification (§8.3 & §10).
-     */
-    function recordVerifiedBatchRoot(
-        bytes32 batchMerkleRoot,
-        uint256 count,
-        string calldata system
-    ) external onlyOwner {
-        verifiedBatchRoots[batchMerkleRoot] = true;
-        emit VerdictBatchVerified(batchMerkleRoot, count, system);
     }
 }
