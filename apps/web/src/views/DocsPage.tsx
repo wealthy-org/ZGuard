@@ -115,6 +115,11 @@ const SIDEBAR = [
 export function DocsPage() {
   const [active, setActive] = useState(SIDEBAR[0].id);
   const mainRef = useRef<HTMLDivElement>(null);
+  // Examples use the origin this page is served from (the web proxies /v1/* to the API).
+  const [apiBase, setApiBase] = useState('https://<your-zguard-host>');
+  useEffect(() => {
+    setApiBase(window.location.origin);
+  }, []);
 
   useEffect(() => {
     const obs = new IntersectionObserver(
@@ -244,51 +249,88 @@ export function DocsPage() {
 
             {/* 02 Quick start */}
             <Section id="quickstart" num="02" title="Quick start">
-              <P>Install the local SDK first — quote-match runs offline, without a key, without telemetry.</P>
+              <P>
+                Testnet only (RHC 46630). <code className="font-mono text-white">@zguard/sdk</code> and{' '}
+                <code className="font-mono text-white">@zguard/mcp</code> are not published to npm yet, so build them from the
+                repo. Every example below was run as-is against this deployment.
+              </P>
               <CodeBlock
-                title="terminal"
-                code={`pnpm add @zguard/sdk
-# or use it directly with your runner of choice
-npx tsx example.ts`}
+                title="terminal · build from the repo"
+                code={`git clone https://github.com/wealthy-org/ZGuard.git && cd ZGuard
+corepack pnpm install
+corepack pnpm --filter @zguard/sdk build && corepack pnpm --filter @zguard/mcp build
+
+# in your own project (adjust the path)
+pnpm add file:../ZGuard/packages/sdk`}
               />
               <CodeBlock
-                title="sdk · guard a payment"
-                code={`import { guard, guardEvmSigner } from "@zguard/sdk";
+                title="curl · hosted API (testnet 46630)"
+                code={`export ZGUARD_API=${apiBase}
 
-const r = await guard({
-  network: "eip155:4663",
-  quote,                              // from the HTTP 402 channel — never from the model
+# free testnet key (limited per IP per hour)
+KEY=$(curl -s -X POST $ZGUARD_API/v1/register | sed -E 's/.*"apiKey":"([^"]+)".*/\\1/')
+
+curl -s $ZGUARD_API/v1/guard \\
+  -H "Authorization: Bearer $KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"network":"eip155:46630",
+       "quote":{"asset":"0x7E955252E15c84f5768B83c41a71F9eba181802F","payTo":"0x000000000000000000000000000000000000aaaa","amount":"0","chainId":46630},
+       "payload":{"type":"eip3009","authorization":{
+         "from":"0x54b83d1e6Ee818FFB96D260Fc3E4dfc3Aaf03f79","to":"0x000000000000000000000000000000000000aaaa",
+         "value":"0","validAfter":"0","validBefore":"4102444800",
+         "nonce":"0x0000000000000000000000000000000000000000000000000000000000000001",
+         "domain":{"name":"Global Dollar","version":"1","chainId":46630,"verifyingContract":"0x7E955252E15c84f5768B83c41a71F9eba181802F"}}},
+       "checks":["quote","simulation","token_risk"]}'
+
+# → {"decision":"allow", "payload_hash":"0x…", "expires_at":…}
+# change "to" in the authorization → deny (payTo mismatch)
+# no credit left → HTTP 402 with a payable USDG quote on eip155:46630`}
+              />
+              <CodeBlock
+                title="sdk · example.mjs (node example.mjs)"
+                code={`import { ZGuardClient } from "@zguard/sdk";
+
+const zg = new ZGuardClient({ baseUrl: "${apiBase}" });
+if (!process.env.ZGUARD_API_KEY) zg.setApiKey((await zg.register()).apiKey);
+
+const usdg = "0x7E955252E15c84f5768B83c41a71F9eba181802F"; // USDG on 46630
+const quote = { asset: usdg, payTo: "0x000000000000000000000000000000000000aaaa", amount: "0", chainId: 46630 };
+const authorization = {
+  from: "0x54b83d1e6Ee818FFB96D260Fc3E4dfc3Aaf03f79", to: quote.payTo, value: "0",
+  validAfter: "0", validBefore: "4102444800", nonce: "0x" + "00".repeat(31) + "01",
+  domain: { name: "Global Dollar", version: "1", chainId: 46630, verifyingContract: usdg },
+};
+
+const r = await zg.guard({
+  network: "eip155:46630",
+  quote,                                  // from the HTTP 402 channel — never from the model
   payload: { type: "eip3009", authorization },
   checks: ["quote", "simulation", "token_risk"],
 });
-
-if (r.decision !== "allow") {
-  throw new GuardBlocked(r.codes);    // signer never sees the payload
-}
-// allow is bound to r.payload_hash and expires at r.expires_at (~120s)`}
+if (r.decision !== "allow") throw new Error(\`blocked: \${r.codes.join(", ")}\`);
+// allow is bound to r.payload_hash and expires at r.expires_at (~120s).
+// API unreachable → abstain S-FAIL (never allow); no credit → X402PaymentRequiredError with the quote.`}
               />
               <CodeBlock
                 title="mcp · claude code / cursor"
                 code={`{
   "mcpServers": {
     "zguard": {
-      "command": "npx",
-      "args": ["-y", "@zguard/mcp"],
-      "env": { "ZGUARD_API_KEY": "zg_live_…" }
+      "command": "node",
+      "args": ["/absolute/path/to/ZGuard/packages/mcp/dist/index.js"],
+      "env": {
+        "ZGUARD_API_URL": "${apiBase}",
+        "ZGUARD_API_KEY": "zg_live_…",
+        "ZGUARD_ACTIVE_CHAIN_ID": "46630"
+      }
     }
   }
 }`}
               />
-              <CodeBlock
-                title="curl · hosted API"
-                code={`curl -s $ZGUARD_API/v1/guard \\
-  -H "Authorization: Bearer zg_live_…" \\
-  -H "Content-Type: application/json" \\
-  -d '{ "network": "eip155:4663", "quote": {…}, "payload": {…} }'
-
-# no credit left → HTTP 402 with a payable x402 quote (USDG on 4663)`}
-              />
-              <Note kind="verify">The production base URL is open config and deliberately not hardcoded here.</Note>
+              <Note kind="verify">
+                Tools: guard_payment · guard_transaction · check_token · check_before_use · guard_bundle. The base URL is the
+                origin of this page; self-hosted deployments use their own.
+              </Note>
             </Section>
 
             {/* 03 Checks */}
