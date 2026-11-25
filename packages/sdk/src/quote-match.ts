@@ -9,6 +9,8 @@ import {
 } from "viem";
 import { RHC_TESTNET_CHAIN_ID } from "./constants.js";
 import { scanContent } from "./content-scan.js";
+import { analyzeSolanaTransfer, decodeSolanaTransaction, type SolanaTransferAnalysis } from "./solana-decode.js";
+import { APPROVAL_SELECTORS, approvalMatchesAllowList, findApprovals } from "./approvals.js";
 import { computeEip712DomainSeparator, getVerifiedEip712Domain } from "./eip712.js";
 import type {
   EvmCallObject,
@@ -35,15 +37,7 @@ const COMMON_EVM_PAYMENT_ABI = parseAbi([
   "function sell(uint256 tokensIn, uint256 minQuoteOut, address recipient) returns (uint256 quoteOut)",
 ]);
 
-const APPROVAL_SELECTORS = new Set([
-  "0x095ea7b3", // approve(address,uint256)
-  "0x39509351", // increaseAllowance(address,uint256)
-  "0xa22cb465", // setApprovalForAll(address,bool)
-  "0xd505accf", // permit(address,address,uint256,uint256,uint8,bytes32,bytes32)
-  "0x8fcbaf0c", // DAI-style permit
-  "0x2b67b570", // Permit2 approve
-  "0x30f28b7a", // Permit2 permitTransferFrom
-]);
+// Approval selectors + recursive wrapper scanning live in ./approvals.ts (gaps QM-3, QM-5)
 
 export function parseChainIdFromNetwork(network: string): number | null {
   const m = network.trim().match(/^eip155:(\d+)$/);
@@ -367,9 +361,54 @@ export function evaluateQuoteMatch(ctx: QuoteMatchContext): QuoteCheckResult {
       };
     }
 
-    if (spl.hasApproveOrSetAuthority) {
+    // The approve/set-authority flag is derived from the decoded instructions, never from the
+    // caller-supplied boolean (which could simply be set to false).
+    if (!spl.transaction) {
+      return {
+        decision: "abstain",
+        codes: ["Q-DECODE"],
+        expected,
+        actual,
+        notes: ["Solana SPL payload must include the serialized transaction (base64) so instructions can be decoded"],
+      };
+    }
+    let analysis: SolanaTransferAnalysis;
+    try {
+      analysis = analyzeSolanaTransfer(decodeSolanaTransaction(spl.transaction));
+    } catch (err) {
+      return {
+        decision: "abstain",
+        codes: ["Q-DECODE"],
+        expected,
+        actual,
+        notes: [`Solana transaction could not be decoded: ${err instanceof Error ? err.message : String(err)}`],
+      };
+    }
+    if (analysis.hasApproveOrSetAuthority) {
       codes.push("Q-006");
-      notes.push("Solana SPL SetAuthority / Approve instruction detected and denied (§2.1)");
+      notes.push("Solana SPL Approve / ApproveChecked / SetAuthority instruction decoded and denied (§2.1)");
+    }
+    if (analysis.disallowed.length > 0) {
+      if (!codes.includes("Q-006")) codes.push("Q-006");
+      notes.push(`Instructions outside a one-shot SPL transfer: ${analysis.disallowed.join(", ")}`);
+    }
+    if (analysis.transfers.length !== 1) {
+      if (!codes.includes("Q-002")) codes.push("Q-002");
+      notes.push(`Expected exactly one SPL transfer instruction, decoded ${analysis.transfers.length}`);
+    } else {
+      const t = analysis.transfers[0]!;
+      if (t.amount !== actualAmount) {
+        if (!codes.includes("Q-002")) codes.push("Q-002");
+        notes.push(`Decoded transfer amount ${t.amount.toString()} != declared ${actualAmount.toString()}`);
+      }
+      if (t.kind !== "transferChecked" || t.mint !== spl.mint.trim()) {
+        if (!codes.includes("Q-003")) codes.push("Q-003");
+        notes.push(
+          t.kind !== "transferChecked"
+            ? "Use TransferChecked so the mint is bound inside the signed instruction"
+            : `Decoded mint ${t.mint} != declared ${spl.mint}`
+        );
+      }
     }
     const instructions = spl.instructions ?? [];
     for (const ix of instructions) {
@@ -455,9 +494,34 @@ export function evaluateQuoteMatch(ctx: QuoteMatchContext): QuoteCheckResult {
       };
     }
 
+    // QM-4: the signed EIP-712 domain is what binds the authorization to a contract and chain.
+    // Without it, asset/chain would silently be copied from the quote and Q-003/Q-004 could never fire.
+    if (
+      !auth.domain ||
+      auth.domain.chainId === undefined ||
+      auth.domain.chainId === null ||
+      !Number.isFinite(Number(auth.domain.chainId)) ||
+      !/^0x[0-9a-fA-F]{40}$/.test(String(auth.domain.verifyingContract ?? ""))
+    ) {
+      return {
+        decision: "abstain",
+        codes: ["Q-007"],
+        expected: {
+          payTo: quote.payTo,
+          asset: quote.asset,
+          amount: quote.amount,
+          chainId: quote.chainId ?? networkChainId!,
+        },
+        actual: null,
+        notes: [
+          "EIP-3009 authorization must carry the signed EIP-712 domain (chainId + verifyingContract); refusing to assume it from the quote",
+        ],
+      };
+    }
+
     const expectedChainId = quote.chainId ?? networkChainId!;
-    const actualChainId = auth.domain?.chainId ?? networkChainId!;
-    const actualAsset = auth.domain?.verifyingContract ?? quote.asset;
+    const actualChainId = Number(auth.domain.chainId);
+    const actualAsset = String(auth.domain.verifyingContract);
     const expectedAmount = parseBigIntSafe(quote.amount);
     const actualAmount = parseBigIntSafe(auth.value)!;
 
@@ -574,7 +638,7 @@ export function evaluateQuoteMatch(ctx: QuoteMatchContext): QuoteCheckResult {
     };
   }
 
-  // Case 2: Router Intent (Perm or RHC/pons Terminal swap/route) — with or without raw tx calldata
+  // Case 2: Router Intent (Perm or RHC/pons Terminal swap/route)
   if (payload.type === "intent" || intent) {
     if (!intent) {
       return {
@@ -593,90 +657,119 @@ export function evaluateQuoteMatch(ctx: QuoteMatchContext): QuoteCheckResult {
       chainId: intent.chainId,
     };
 
+    // QM-2: an intent alone is compared with nothing. Only the bytes that will actually be signed
+    // (payload.tx) can be checked for parity, so intent-only requests never produce `allow`.
+    if (!payload.tx) {
+      return {
+        decision: "abstain",
+        codes: ["Q-DECODE"],
+        expected,
+        actual: null,
+        notes: [
+          "Router intent supplied without payload.tx: nothing to compare (attach the exact transaction that will be signed)",
+        ],
+      };
+    }
+
     if (intent.chainId !== networkChainId) {
       codes.push("Q-004");
       notes.push(`Intent chainId ${intent.chainId} != network chainId ${networkChainId}`);
     }
 
+    const allowList = intent.allowApprovals ?? [];
     const fnLower = intent.function.toLowerCase();
-    const isExplicitApprovalIntent = intent.allowApprovals && intent.allowApprovals.length > 0;
-    if (
-      !isExplicitApprovalIntent &&
-      (fnLower.startsWith("approve") ||
-        fnLower.startsWith("permit") ||
-        fnLower.startsWith("setapprovalforall") ||
-        fnLower.startsWith("increaseallowance") ||
-        fnLower.startsWith("setauthority"))
-    ) {
+    const intentIsApproval =
+      fnLower.startsWith("approve") ||
+      fnLower.startsWith("permit") ||
+      fnLower.startsWith("setapprovalforall") ||
+      fnLower.startsWith("increaseallowance") ||
+      fnLower.startsWith("increaseapproval") ||
+      fnLower.startsWith("authorizeoperator") ||
+      fnLower.startsWith("setauthority");
+    if (intentIsApproval && allowList.length === 0) {
       codes.push("Q-006");
-      notes.push(`Approval/delegation function "${intent.function}" is not permitted outside explicit allowApprovals`);
+      notes.push(`Approval/delegation function "${intent.function}" is not permitted without an explicit allowApprovals entry`);
     }
 
-    // If raw tx / call object is also attached, re-encode intent and enforce byte-level parity (§6.1.2)
-    if (payload.tx) {
-      const txObj = extractTxObject(payload.tx);
-      if (!txObj) {
-        return {
-          decision: "abstain",
-          codes: ["Q-DECODE"],
-          expected,
-          actual: null,
-          notes: ["Failed to decode transaction bytes supplied alongside intent"],
-        };
-      }
+    const txObj = extractTxObject(payload.tx);
+    if (!txObj) {
+      return {
+        decision: "abstain",
+        codes: ["Q-DECODE"],
+        expected,
+        actual: null,
+        notes: ["Failed to decode transaction bytes supplied alongside intent"],
+      };
+    }
 
-      if (txObj.data && txObj.data.length >= 10) {
-        const selector = txObj.data.slice(0, 10).toLowerCase();
-        if (!isExplicitApprovalIntent && APPROVAL_SELECTORS.has(selector)) {
-          codes.push("Q-006");
-          notes.push(`Transaction calldata selector ${selector} grants approval/permit outside signed intent`);
-        }
+    // QM-3 / QM-5: every approval in the calldata (including inside multicall/execute wrappers) must
+    // match an allowApprovals entry on token, spender and amount; otherwise Q-006.
+    const scan = findApprovals(txObj.to, txObj.data);
+    if (scan.undecodableWrapper) {
+      return {
+        decision: "abstain",
+        codes: ["Q-DECODE"],
+        expected,
+        actual: null,
+        notes: ["Wrapped calldata (multicall/execute) could not be fully decoded; refusing to assume no approval inside"],
+      };
+    }
+    for (const ap of scan.approvals) {
+      if (!approvalMatchesAllowList(ap, allowList)) {
+        if (!codes.includes("Q-006")) codes.push("Q-006");
+        notes.push(
+          `Approval ${ap.kind} (selector ${ap.selector}${ap.path.length ? ` via ${ap.path.join(" > ")}` : ""}) to spender ${ap.spender ?? "unknown"} on ${ap.token ?? ap.target} for ${ap.amount === null ? "unbounded/unknown" : ap.amount.toString()} is not covered by intent.allowApprovals`
+        );
       }
+    }
 
-      if (normAddr(txObj.to) !== normAddr(intent.to)) {
-        codes.push("Q-001");
-        notes.push(`Transaction target ${txObj.to} != intent target ${intent.to}`);
-      }
+    if (normAddr(txObj.to) !== normAddr(intent.to)) {
+      codes.push("Q-001");
+      notes.push(`Transaction target ${txObj.to} != intent target ${intent.to}`);
+    }
 
-      const expectedVal = parseBigIntSafe(intent.value ?? "0") ?? 0n;
-      const actualVal = parseBigIntSafe(txObj.value ?? "0") ?? 0n;
-      if (actualVal !== expectedVal) {
-        codes.push("Q-002");
-        notes.push(`Transaction value ${actualVal.toString()} != intent value ${expectedVal.toString()}`);
-      }
+    const expectedVal = parseBigIntSafe(intent.value ?? "0") ?? 0n;
+    const actualVal = parseBigIntSafe(txObj.value ?? "0");
+    if (actualVal === null || actualVal !== expectedVal) {
+      codes.push("Q-002");
+      notes.push(`Transaction value ${String(txObj.value ?? "0")} != intent value ${expectedVal.toString()}`);
+    }
 
-      if (txObj.chainId !== undefined && txObj.chainId !== intent.chainId) {
-        codes.push("Q-004");
-        notes.push(`Transaction chainId ${txObj.chainId} != intent chainId ${intent.chainId}`);
-      }
+    if (txObj.chainId !== undefined && txObj.chainId !== intent.chainId) {
+      codes.push("Q-004");
+      notes.push(`Transaction chainId ${txObj.chainId} != intent chainId ${intent.chainId}`);
+    }
 
-      const reencoded = encodeIntentCalldata(intent);
-      if (reencoded && txObj.data && txObj.data !== "0x") {
-        if (reencoded.toLowerCase() !== txObj.data.toLowerCase()) {
-          return {
-            decision: "deny",
-            codes: codes.length > 0 ? codes : ["Q-001"],
-            expected,
-            actual: {
-              payTo: txObj.to,
-              asset: expected.asset,
-              amount: txObj.value ?? "0",
-              chainId: txObj.chainId ?? intent.chainId,
-            },
-            notes: [...notes, "Calldata bytes do not match re-encoded router intent"],
-          };
-        }
-      } else if (!reencoded && txObj.data && txObj.data !== "0x") {
-        if (!/^0x([0-9a-fA-F]{2}){4,}$/.test(txObj.data)) {
-          return {
-            decision: "abstain",
-            codes: ["Q-DECODE"],
-            expected,
-            actual: null,
-            notes: ["Malformed calldata on intent transaction"],
-          };
-        }
-      }
+    // QM-1: calldata parity is mandatory. If the intent cannot be re-encoded (bare function name
+    // without abi/signature, bad args) we cannot prove the bytes match, so we abstain.
+    const reencoded = encodeIntentCalldata(intent);
+    const txData = (txObj.data ?? "0x").toLowerCase();
+    const actualOut = {
+      payTo: txObj.to,
+      asset: expected.asset,
+      amount: txObj.value ?? "0",
+      chainId: txObj.chainId ?? intent.chainId,
+    };
+    if (!reencoded) {
+      return {
+        decision: codes.length > 0 ? "deny" : "abstain",
+        codes: codes.length > 0 ? codes : ["Q-DECODE"],
+        expected,
+        actual: actualOut,
+        notes: [
+          ...notes,
+          `Router intent function "${intent.function}" could not be ABI-encoded (provide intent.abi or a full signature like "swap(address,uint256)"); calldata parity unproven`,
+        ],
+      };
+    }
+    if (reencoded.toLowerCase() !== txData) {
+      return {
+        decision: "deny",
+        codes: codes.length > 0 ? codes : ["Q-001"],
+        expected,
+        actual: actualOut,
+        notes: [...notes, "Calldata bytes do not match re-encoded router intent"],
+      };
     }
 
     const policyAmount = parseBigIntSafe(expected.amount) ?? 0n;
@@ -691,21 +784,21 @@ export function evaluateQuoteMatch(ctx: QuoteMatchContext): QuoteCheckResult {
     if (!policyRes.ok) {
       codes.push(policyRes.code);
       notes.push(policyRes.note);
-      if (policyRes.decision === "abstain") {
-        return { decision: "abstain", codes, expected, actual: expected, notes };
+      if (policyRes.decision === "abstain" && codes.length === 1) {
+        return { decision: "abstain", codes, expected, actual: actualOut, notes };
       }
     }
 
     if (codes.length > 0) {
-      return { decision: "deny", codes, expected, actual: expected, notes };
+      return { decision: "deny", codes, expected, actual: actualOut, notes };
     }
 
     return {
       decision: "allow",
       codes: [],
       expected,
-      actual: expected,
-      notes: [...notes, `Router intent verified for chain ${intent.chainId || RHC_TESTNET_CHAIN_ID}`],
+      actual: actualOut,
+      notes: [...notes, `Router intent re-encoded byte-for-byte against the signed calldata on chain ${intent.chainId || RHC_TESTNET_CHAIN_ID}`],
     };
   }
 
@@ -805,13 +898,18 @@ export function evaluateQuoteMatch(ctx: QuoteMatchContext): QuoteCheckResult {
       });
     } catch {
       const selector = data.slice(0, 10).toLowerCase();
-      if (APPROVAL_SELECTORS.has(selector)) {
+      const wrapped = findApprovals(txObj.to, data);
+      if (APPROVAL_SELECTORS.has(selector) || wrapped.approvals.length > 0) {
         return {
           decision: "deny",
           codes: ["Q-006"],
           expected,
           actual: null,
-          notes: [`Selector ${selector} is an approval/permit call outside a one-shot payment`],
+          notes: [
+            wrapped.approvals.length > 0 && !APPROVAL_SELECTORS.has(selector)
+              ? `Approval hidden inside wrapper call (${wrapped.approvals.map((a) => a.path.join(" > ") || a.selector).join(", ")}) on a payment path`
+              : `Selector ${selector} is an approval/permit call outside a one-shot payment`,
+          ],
         };
       }
       return {
@@ -877,6 +975,11 @@ export function evaluateQuoteMatch(ctx: QuoteMatchContext): QuoteCheckResult {
     if (actualAmount !== (parseBigIntSafe(quote.amount) ?? -1n)) codes.push("Q-002");
     if (normAddr(txObj.to) !== normAddr(quote.asset)) codes.push("Q-003");
     if (txChain !== expectedChainId) codes.push("Q-004");
+    // QM-7: an ERC-20 payment must not also send native ETH to the token contract.
+    if (txVal !== 0n) {
+      if (!codes.includes("Q-002")) codes.push("Q-002");
+      notes.push(`ERC-20 payment call also sends ${txVal.toString()} wei of native value (must be 0)`);
+    }
 
     const policyRes = evaluateSpendPolicy(
       ctx.spendPolicy,

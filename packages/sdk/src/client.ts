@@ -287,6 +287,11 @@ export async function guardPermRoute(params: {
   if (!params.intent) {
     throw new Error("[ZGuard:Perm] Router intent is required and must be built by router code.");
   }
+  if (!params.tx) {
+    // QM-2: the guard compares the intent against the bytes that will be signed; without them the
+    // verdict would be abstain anyway, so fail early with a clear message.
+    throw new Error("[ZGuard:Perm] The exact transaction to be signed (tx) is required alongside the router intent.");
+  }
   return params.client.guard({
     network: `eip155:${params.intent.chainId}`,
     payload: {

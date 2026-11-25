@@ -136,7 +136,11 @@ export function createZGuardMcpServer(opts: ZGuardMcpOptions = {}) {
         value: z.string().default("0"),
         from: z.string().optional(),
       }),
-      tx: z.any().optional(),
+      tx: z
+        .any()
+        .describe(
+          "Exact transaction that will be signed ({to,data,value,chainId} or raw hex). Required: an intent alone is never compared with itself (abstain Q-DECODE)."
+        ),
       token: z.string().optional(),
     },
     async (args) => {

@@ -311,7 +311,10 @@ export function guardEvmSigner<T extends EvmSignerLike>(signer: T, config: Guard
         return signer.signTypedData(args);
       }
 
-      // Non-EIP-3009 typed data (e.g., Permit2 / unknown typed data) -> deny Q-006 unless explicit intent
+      // Non-EIP-3009 typed data (e.g., Permit2 / unknown typed data) is never auto-approved.
+      // QM-2 signer binding: an intent without the exact bytes being signed is not comparable, so the
+      // guard returns abstain (Q-DECODE) and ensureAllowed() refuses; without an intent we send the
+      // permit selector so Q-006 fires. Either way unknown typed data cannot be signed through ZGuard.
       const intent = ctx?.intent ?? config.contextIntent;
       const payload: GuardPayload = intent
         ? { type: "intent", intent }
