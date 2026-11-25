@@ -1,0 +1,10 @@
+[package]
+name = "zguard-quote-rules"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Pure ZGuard quote-match rules shared by the SP1 guest and native tests (no zkVM dependency)"
+
+[dependencies]
+serde_json = { version = "1", default-features = false, features = ["alloc"] }
+tiny-keccak = { version = "2.0", features = ["keccak"] }

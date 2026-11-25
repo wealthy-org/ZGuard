@@ -3,10 +3,8 @@ name = "zguard-sp1-quote-guest"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
-description = "ZGuard pure quote-match rule engine for Succinct SP1 zkVM -> Groth16 BN254 on RHC 4663"
+description = "ZGuard quote-match SP1 guest (scaffold: build with `cargo prove build`; not built in CI yet)"
 
 [dependencies]
 sp1-zkvm = "4.1.0"
-serde = { version = "1.0", features = ["derive"] }
-alloy-sol-types = "0.8.20"
-tiny-keccak = { version = "2.0", features = ["keccak"] }
+zguard-quote-rules = { path = "../quote-rules" }
