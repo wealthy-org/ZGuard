@@ -77,11 +77,21 @@ export interface StorageStore {
     response: GuardResponse;
   }): Promise<void>;
   listReceipts(tenantId: string | null, limit?: number): Promise<ReceiptRecord[]>;
-  getRevenueSummary(): Promise<{
+  /** Revenue totals. `tenantId` given = only that tenant's receipts; omitted = global (admin only). */
+  getRevenueSummary(tenantId?: string | null): Promise<{
     totalChargedMicroUsdg: string;
     totalBuybackMicroUsdg: string;
     receiptCount: number;
   }>;
+  /**
+   * Fixed-window counter shared by every serverless instance (gap C5). Increments `key` in the
+   * current window and reports whether the caller is still within `limit`.
+   */
+  hitRateLimit(
+    key: string,
+    windowSeconds: number,
+    limit: number
+  ): Promise<{ allowed: boolean; count: number; resetAt: string }>;
   upsertZkAttestation(att: ZkAttestation): Promise<void>;
   getZkAttestation(decisionId: string): Promise<ZkAttestation | null>;
   upsertTokenObservation(chainId: number, address: string, risk: TokenRiskCheckResult): Promise<void>;
@@ -190,6 +200,17 @@ export class NeonPostgresStore implements StorageStore {
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           PRIMARY KEY (chain_id, address)
         )
+      `;
+      await this.sqlClient`
+        CREATE TABLE IF NOT EXISTS zguard_rate_limits (
+          bucket_key TEXT NOT NULL,
+          window_start BIGINT NOT NULL,
+          hits INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY (bucket_key, window_start)
+        )
+      `;
+      await this.sqlClient`
+        ALTER TABLE zguard_zk_attestations ADD COLUMN IF NOT EXISTS note TEXT
       `;
       this.initialized = true;
     } catch (err) {
@@ -424,20 +445,54 @@ export class NeonPostgresStore implements StorageStore {
     }));
   }
 
-  public async getRevenueSummary() {
+  public async getRevenueSummary(tenantId?: string | null) {
     await this.ensureSchema();
-    const res = await this.sqlClient`
-      SELECT
-        COALESCE(SUM(charged_micro_usdg), 0)::text AS charged,
-        COALESCE(SUM(buyback_micro_usdg), 0)::text AS buyback,
-        COUNT(*)::int AS cnt
-      FROM zguard_receipts
-    `;
+    const res = tenantId
+      ? await this.sqlClient`
+          SELECT
+            COALESCE(SUM(charged_micro_usdg), 0)::text AS charged,
+            COALESCE(SUM(buyback_micro_usdg), 0)::text AS buyback,
+            COUNT(*)::int AS cnt
+          FROM zguard_receipts
+          WHERE tenant_id = ${tenantId}
+        `
+      : await this.sqlClient`
+          SELECT
+            COALESCE(SUM(charged_micro_usdg), 0)::text AS charged,
+            COALESCE(SUM(buyback_micro_usdg), 0)::text AS buyback,
+            COUNT(*)::int AS cnt
+          FROM zguard_receipts
+        `;
     const row = (res as unknown as Array<{ charged: string; buyback: string; cnt: number }>)[0];
     return {
       totalChargedMicroUsdg: row?.charged ?? "0",
       totalBuybackMicroUsdg: row?.buyback ?? "0",
       receiptCount: Number(row?.cnt ?? 0),
+    };
+  }
+
+  public async hitRateLimit(key: string, windowSeconds: number, limit: number) {
+    await this.ensureSchema();
+    const nowSec = Math.floor(Date.now() / 1000);
+    const windowStart = nowSec - (nowSec % windowSeconds);
+    const res = await this.sqlClient`
+      INSERT INTO zguard_rate_limits (bucket_key, window_start, hits)
+      VALUES (${key}, ${windowStart}, 1)
+      ON CONFLICT (bucket_key, window_start)
+      DO UPDATE SET hits = zguard_rate_limits.hits + 1
+      RETURNING hits
+    `;
+    const hits = Number((res as unknown as Array<{ hits: number }>)[0]?.hits ?? limit + 1);
+    // Opportunistic cleanup of old windows (cheap, bounded)
+    if (hits === 1) {
+      void this.sqlClient`
+        DELETE FROM zguard_rate_limits WHERE window_start < ${windowStart - 86_400}
+      `.catch(() => undefined);
+    }
+    return {
+      allowed: hits <= limit,
+      count: hits,
+      resetAt: new Date((windowStart + windowSeconds) * 1000).toISOString(),
     };
   }
 
@@ -456,6 +511,7 @@ export class NeonPostgresStore implements StorageStore {
         verifyTx: att.verifyTx,
         bn254PrecompileVerified: Boolean(att.bn254PrecompileVerified),
         status: att.status,
+        note: att.note ?? null,
         updatedAt: new Date(),
       })
       .onConflictDoUpdate({
@@ -465,6 +521,7 @@ export class NeonPostgresStore implements StorageStore {
           verifyTx: att.verifyTx,
           bn254PrecompileVerified: Boolean(att.bn254PrecompileVerified),
           status: att.status,
+          note: att.note ?? null,
           updatedAt: new Date(),
         },
       });
@@ -490,6 +547,7 @@ export class NeonPostgresStore implements StorageStore {
       verifyTx: r.verifyTx,
       bn254PrecompileVerified: r.bn254PrecompileVerified,
       status: r.status,
+      ...(r.note ? { note: r.note } : {}),
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
     };
@@ -749,17 +807,40 @@ export class LocalJsonStore implements StorageStore {
     return list.slice(0, limit);
   }
 
-  public async getRevenueSummary() {
+  public async getRevenueSummary(tenantId?: string | null) {
     let totalCharged = 0n;
     let totalBuyback = 0n;
-    for (const r of this.state.receipts) {
+    const list = tenantId
+      ? this.state.receipts.filter((r) => r.tenantId === tenantId)
+      : this.state.receipts;
+    for (const r of list) {
       totalCharged += BigInt(r.chargedMicroUsdg);
       totalBuyback += BigInt(r.buybackMicroUsdg);
     }
     return {
       totalChargedMicroUsdg: totalCharged.toString(),
       totalBuybackMicroUsdg: totalBuyback.toString(),
-      receiptCount: this.state.receipts.length,
+      receiptCount: list.length,
+    };
+  }
+
+  private readonly rateBuckets = new Map<string, { windowStart: number; hits: number }>();
+
+  public async hitRateLimit(key: string, windowSeconds: number, limit: number) {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const windowStart = nowSec - (nowSec % windowSeconds);
+    const prev = this.rateBuckets.get(key);
+    const hits = prev && prev.windowStart === windowStart ? prev.hits + 1 : 1;
+    this.rateBuckets.set(key, { windowStart, hits });
+    if (this.rateBuckets.size > 10_000) {
+      for (const [k, v] of this.rateBuckets) {
+        if (v.windowStart < windowStart) this.rateBuckets.delete(k);
+      }
+    }
+    return {
+      allowed: hits <= limit,
+      count: hits,
+      resetAt: new Date((windowStart + windowSeconds) * 1000).toISOString(),
     };
   }
 
@@ -804,6 +885,13 @@ export function createStore(config: ZGuardAppConfig): StorageStore {
   if (config.storageMode === "neon") {
     throw new StorageUnavailableError(
       "ZGUARD_STORAGE_MODE=neon requires DATABASE_URL (Neon Postgres connection string)"
+    );
+  }
+  // C6-table: a serverless instance writing credits/nonces to a local JSON file loses them on every
+  // cold start (replayable payments, vanishing credit). Production must use Neon.
+  if (config.isProduction && !config.allowLocalStoreInProduction) {
+    throw new StorageUnavailableError(
+      "NODE_ENV=production requires DATABASE_URL (Neon). The local JSON store is dev-only; set ZGUARD_ALLOW_LOCAL_STORE_IN_PRODUCTION=true only for throwaway demos."
     );
   }
   return new LocalJsonStore(config.apiKeyPrefix);
