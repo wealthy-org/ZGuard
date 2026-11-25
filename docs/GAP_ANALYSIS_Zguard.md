@@ -612,28 +612,37 @@ Urutan wajib. Tiap tahap dicatat di dokumen ini.
 **Tabel uji manual web UI (isi oleh anak dev)**
 | # | Alur yang diuji | Diharapkan | Hasil nyata (jalan / tidak jalan) | Catatan, screenshot, tx |
 |---|---|---|---|---|
-| 1 | Landing → Open Console → tombol Connect Wallet terlihat | Terlihat di navbar dan atas Console | belum diuji live | Kode: `WalletPill` (navbar) + `WalletStatusCard` (atas Console), commit `1fbfc06`; preview lokal tersedia |
-| 2 | Connect Wallet (MetaMask/Rabby), pindah ke chain 46630 | Alamat tampil, tanpa popup tanda tangan | belum diuji (wallet asli) | Unit test wallet tiruan 7/7: hanya `eth_requestAccounts` + `wallet_switchEthereumChain(0xb626)` |
+| 1 | Landing → Open Console → tombol Connect Wallet terlihat | Terlihat di navbar dan atas Console | **jalan (live, 2026-11-25)** | Kode: `WalletPill` (navbar) + `WalletStatusCard` (atas Console), commit `1fbfc06`; preview lokal tersedia |
+| 2 | Connect Wallet (MetaMask/Rabby), pindah ke chain 46630 | Alamat tampil, tanpa popup tanda tangan | **jalan (live, wallet asli, 2026-11-25)**: hanya popup Connect + Switch network, alamat + Testnet 46630 tampil, reject ditangani wajar | Unit test wallet tiruan 7/7: hanya `eth_requestAccounts` + `wallet_switchEthereumChain(0xb626)` |
 | 3 | Banner saat API mati | Tampil peringatan, tidak ada hasil palsu | jalan (build lokal) | Build `VERCEL=1` tanpa URL → `/v1/config` 503 → banner `api-offline-banner` + badge "API OFFLINE"; Console menulis "EXAMPLE FIXTURE (not a live verdict)" |
-| 4 | Skenario: Matching USDG payment | allow, live, bukan fallback offline | jalan (lokal → RHC 46630) | `check-console-scenarios.ts`: allow, kind=usdg, ~120–250 ms |
-| 5 | Skenario: Active Pons curve scan | allow, `kind=pons_curve`, state curve terisi | jalan (lokal → RHC 46630) | allow, kind=pons_curve |
-| 6 | Skenario: Graduated Pons Uniswap v4 | allow, `kind=pons_graduated_v4` | jalan (lokal → RHC 46630) | allow, kind=pons_graduated_v4 |
-| 7 | Skenario: Spoofed Mock USDG | deny `T-MINT` | jalan (lokal → RHC 46630) | deny `T-MINT, C-FINDING, T-LP` |
-| 8 | Skenario: hidden approve() | deny `Q-006` / `S-APPROVE` | jalan (lokal → RHC 46630) | deny `Q-006, S-APPROVE` |
-| 9 | Skenario: undecodable bytes | abstain | jalan (lokal → RHC 46630) | abstain `Q-DECODE, S-FAIL` |
+| 4 | Skenario: Matching USDG payment | allow, live, bukan fallback offline | **jalan (live zguard-delta.vercel.app, 2026-11-25)** | `check-console-scenarios.ts`: allow, kind=usdg, ~120–250 ms |
+| 5 | Skenario: Active Pons curve scan | allow, `kind=pons_curve`, state curve terisi | **jalan (live zguard-delta.vercel.app, 2026-11-25)** | allow, kind=pons_curve |
+| 6 | Skenario: Graduated Pons Uniswap v4 | allow, `kind=pons_graduated_v4` | **jalan (live zguard-delta.vercel.app, 2026-11-25)** | allow, kind=pons_graduated_v4 |
+| 7 | Skenario: Spoofed Mock USDG | deny `T-MINT` | **jalan (live zguard-delta.vercel.app, 2026-11-25)** | deny `T-MINT, C-FINDING, T-LP` |
+| 8 | Skenario: hidden approve() | deny `Q-006` / `S-APPROVE` | **jalan (live zguard-delta.vercel.app, 2026-11-25)** | deny `Q-006, S-APPROVE` |
+| 9 | Skenario: undecodable bytes | abstain | **jalan (live zguard-delta.vercel.app, 2026-11-25)** | abstain `Q-DECODE, S-FAIL` |
 | 10 | Token override dengan alamat nyata | Hasil token risk sesuai | belum diuji live | — |
-| 11 | Sign Valid (Allow) dengan wallet asli | Popup wallet muncul, tanda tangan berhasil | belum diuji (wallet asli) | Tombol hanya muncul bila wallet terhubung di chain yang sama |
-| 12 | Tamper payTo (Block) | Tidak ada popup, diblokir | belum diuji (wallet asli) | Logika signer dites: deny → 0 panggilan wallet (`c8-integrations.test.ts`) |
+| 11 | Sign Valid (Allow) dengan wallet asli | Popup wallet muncul, tanda tangan berhasil | **jalan (live, wallet asli, 2026-11-25)** | Tombol hanya muncul bila wallet terhubung di chain yang sama |
+| 12 | Tamper payTo (Block) | Tidak ada popup, diblokir | **jalan (live, wallet asli, 2026-11-25)**: tidak ada popup, status deny | Logika signer dites: deny → 0 panggilan wallet (`c8-integrations.test.ts`) |
 | 13 | Toggle Testnet/Mainnet (mainnet ditunda: cukup pastikan toggle tidak error) | Chain, skenario, dan tombol Connect ikut berubah | jalan (unit test) | Toggle = store bersama; saat terhubung meminta switch ke 0x1237; dites di `wallet.test.ts` |
 | 14 | Halaman ZK: fixture allow dan deny Q-001 | Status `pending → proven → verified`, link `verifyTx` terbuka di explorer | sebagian: berhenti di `pending` (jujur) | allow → verdict allow / bitmask 0x0, deny → deny / 0x1; status `pending`, note "SP1 prover not configured". `verified` butuh prover + verifier (H2–H5) |
-| 15 | RHC Registry: daftar Stock Token dan cek alamat | Data live, token ticker kembar tidak berlabel `stock_token` | belum diuji live | Mock USDG (lookalike) → `other` + deny di skenario 7 |
-| 16 | API & Pricing: register, balance, receipts | Register OK, receipts hanya milik tenant, tanpa key = 401 | jalan (lokal) | register 200 + key `zg_live_…`; `/v1/receipts` tanpa key = 401; pendapatan global hanya muncul dengan `x-admin-key` (`poc-store.test.ts`) |
+| 15 | RHC Registry: daftar Stock Token dan cek alamat | Data live, token ticker kembar tidak berlabel `stock_token` | **sebagian jalan (live API)**: `/v1/registry` 5 stock token testnet (AMZN, TSLA, AMD, PLTR, NFLX); halaman UI belum dicek manual | Mock USDG (lookalike) → `other` + deny di skenario 7 |
+| 16 | API & Pricing: register, balance, receipts | Register OK, receipts hanya milik tenant, tanpa key = 401 | **jalan (live API)** | register 200 + key `zg_live_…`; `/v1/receipts` tanpa key = 401; pendapatan global hanya muncul dengan `x-admin-key` (`poc-store.test.ts`) |
 | 17 | Billing: panggilan berbayar sampai kredit habis | 402 dengan quote USDG di 46630; bayar nyata menambah kredit; bayar dari wallet kosong ditolak | sebagian | 402 ✅ (eip155:46630, USDG, mode deposit, 3 konfirmasi). Bayar nyata belum (butuh USDG faucet); wallet kosong ditolak ✅ di test offline |
-| 18 | Docs: contoh `curl` dan konfigurasi MCP | Berjalan apa adanya | belum diuji | MCP belum dipublikasi ke npm (dicatat di README) |
+| 18 | Docs: contoh `curl` dan konfigurasi MCP | Berjalan apa adanya | **jalan setelah diperbaiki (2026-11-25)** | Sebelumnya TIDAK jalan: `pnpm add @zguard/sdk` dan `npx @zguard/mcp` = npm 404, fungsi `guard` tidak diekspor SDK, network mainnet 4663, curl berisi `{…}`. Sekarang: build dari repo, curl/SDK/MCP testnet 46630 dengan base URL = origin halaman; blok curl & SDK dijalankan persis seperti dirender → `allow`; MCP via `node packages/mcp/dist/index.js` → 5 tools, `tools/call` jalan ke API live |
 | 19 | Tampilan mobile (navbar, Console, Docs) | Tidak ada layout rusak | belum diuji di perangkat | — |
 | 20 | Fail-closed: matikan API atau RPC | Hasil bukan allow, signer menolak | jalan (lokal) | API tidak terkonfigurasi → 503 `abstain P-UNAVAIL`; signer menolak non-allow (`c8-integrations`, acceptance §9.4) |
 
 **Log temuan dari uji manual (isi oleh anak dev, pola 5 bagian)**
+> **Live 2026-11-25:** `ZGUARD_BASE_URL=https://zguard-delta.vercel.app tsx apps/web/scripts/check-console-scenarios.ts` → 6/6 PASS (236–864 ms); `/v1/metrics` p95 `POST /v1/guard` = 500 ms di Vercel. Baris 1–2 diuji user dengan wallet asli.
+
+**[PAYTO-CONFIG] `ZGUARD_X402_PAY_TO` tidak divalidasi** (ditemukan saat konfigurasi deploy)
+- *Masalahnya apa:* server menerima nilai apa pun sebagai alamat treasury dan menampilkannya di `/v1/config` dan quote 402.
+- *Kenapa penting:* salah tempel (misalnya kunci rahasia 64 hex) langsung terlihat publik, dan klien bisa diarahkan membayar ke alamat yang tidak valid.
+- *Contoh kejadian:* `payTo` live sempat berisi string 64 hex tanpa `0x`; kunci terkait sudah dirotasi.
+- *Cara memperbaiki:* `resolvePayTo` di `config.ts` memvalidasi `0x` + 40 hex; nilai salah atau kosong di produksi → pembayaran ditolak, `payTo: null`, `accepts: []`, nilai tidak pernah ditampilkan.
+- *Bedanya setelah diperbaiki:* `payto-config.test.ts` 2/2; live `payTo` = alamat EOA yang valid. Commit `9f7cbc5` (remote).
+
 > Kolom "jalan (lokal)" diuji di stack lokal (web `next start` → API → RPC publik RHC 46630), bukan di zguard-delta.vercel.app, karena deploy menunggu user. Tabel ini wajib diulang di web live dengan wallet asli.
 
 **[C8-BUG] Helper Perm/Terminal tidak pernah bisa menandatangani** (ditemukan saat menulis test C8)
