@@ -32,7 +32,8 @@ const USDG = RHC_CANONICAL_ASSETS.USDG.address;
 const WETH = RHC_CANONICAL_ASSETS.WETH.address;
 const AAPL = "0xaF3D76f1834A1d425780943C99Ea8A608f8a93f9";
 const PONS_CURVE_SAMPLE = "0x05811bBAF648E5FE455d527342Cb4DD03Fa21214";
-const PONS_GRADUATED_SAMPLE = "0x3bA500F1AbabbCF0F0247D06D1c56Fd7E6C4c09D";
+// Hygiene: no hard-coded third-party meme token. Provide one via env to include the graduated-pool class.
+const PONS_GRADUATED_SAMPLE = process.env.ZGUARD_TEST_PONS_GRADUATED_TOKEN?.trim() || null;
 const LIVE_USDG_HOLDER = "0xdf5FfF9cb88B3cAb50572FAE73E2EB08599D25D4";
 const PAYEE_A = "0x000000000000000000000000000000000000aaaa";
 const PAYEE_B = "0x000000000000000000000000000000000000bbbb";
@@ -314,7 +315,7 @@ describe("ZGuard Dev Brief §9 Acceptance Criteria (Live RHC 4663 + Hono + MCP +
       [USDG, "usdg"],
       [AAPL, "stock_token"],
       [PONS_CURVE_SAMPLE, "pons_curve"],
-      [PONS_GRADUATED_SAMPLE, "pons_graduated_v4"],
+      ...(PONS_GRADUATED_SAMPLE ? ([[PONS_GRADUATED_SAMPLE, "pons_graduated_v4"]] as Array<[string, string]>) : []),
       [WETH, "other"],
     ];
 
@@ -524,7 +525,12 @@ describe("ZGuard Dev Brief §9 Acceptance Criteria (Live RHC 4663 + Hono + MCP +
   });
 
   it("§9.7: returns HTTP 402 when credit is 0 and accepts signed EIP-3009 USDG X-PAYMENT on eip155:4663", async () => {
-    const { app } = createTestApi({ ZGUARD_DEV_FREE_CREDIT_MICRO_USDG: "0" });
+    // X402-1: default settlement (auto -> deposit) refuses unsettled EIP-3009; this test exercises the
+    // dev-only offchain mode explicitly (refused when NODE_ENV/VERCEL_ENV=production).
+    const { app } = createTestApi({
+      ZGUARD_DEV_FREE_CREDIT_MICRO_USDG: "0",
+      ZGUARD_X402_SETTLEMENT_MODE: "offchain",
+    });
 
     const unpaid = await app.request("/v1/verify", {
       method: "POST",
@@ -639,7 +645,7 @@ describe("ZGuard Dev Brief §9 Acceptance Criteria (Live RHC 4663 + Hono + MCP +
     assert.ok(injected.codes.includes("C-FINDING"));
   });
 
-  it("§9.10: proves Fixture A (allow) & Fixture B (deny Q-001) asynchronously and verifies BN254 pairing on RHC 4663", async () => {
+  it("§9.10: Fixture A (allow) & Fixture B (deny Q-001) attestations carry correct public inputs and stay pending without an SP1 prover", async () => {
     const { app } = createTestApi();
     const regResp = await app.request("/v1/register", { method: "POST" });
     const { apiKey } = (await regResp.json()) as { apiKey: string };
@@ -673,12 +679,13 @@ describe("ZGuard Dev Brief §9 Acceptance Criteria (Live RHC 4663 + Hono + MCP +
       assert.equal(initial.attestation?.zk?.scope, "quote");
       assert.ok(initial.decisionId);
 
+      // Gap C1/C9: nothing becomes "proven" without a real SP1 proof accepted by the verifier.
       let att: Record<string, unknown> | null = null;
       for (let i = 0; i < 20; i++) {
         const poll = await app.request(`/v1/attestation/${initial.decisionId}`);
         if (poll.status === 200) {
           const json = (await poll.json()) as Record<string, unknown>;
-          if (json.status === "proven" || json.status === "verified") {
+          if (typeof json.note === "string") {
             att = json;
             break;
           }
@@ -686,9 +693,10 @@ describe("ZGuard Dev Brief §9 Acceptance Criteria (Live RHC 4663 + Hono + MCP +
         await new Promise((r) => setTimeout(r, 250));
       }
 
-      assert.ok(att, "expected async ZK attestation to reach proven status");
+      assert.ok(att, "expected the async settlement to record a note");
       assert.equal(att?.scope, "quote");
-      assert.equal(att?.bn254PrecompileVerified, true);
+      assert.equal(att?.status, "pending");
+      assert.notEqual(att?.bn254PrecompileVerified, true);
       const pub = att?.publicInputs as Record<string, unknown>;
       assert.equal(pub.verdict, expectedVerdict);
       assert.equal(pub.ruleBitmask, expectedMask);

@@ -29,6 +29,9 @@ const TESTNET_MOCK_USDG = "0x8F9231B0F448bA9AD045348437458721676c23BC";
 const TESTNET_USDG_HOLDER = "0x54b83d1e6Ee818FFB96D260Fc3E4dfc3Aaf03f79";
 const PAYEE_A = "0x000000000000000000000000000000000000aaaa";
 const PAYEE_B = "0x000000000000000000000000000000000000bbbb";
+// transfer(0x…aaaa, 0)
+const TRANSFER_PAYEE_A_ZERO =
+  "0xa9059cbb000000000000000000000000000000000000000000000000000000000000aaaa0000000000000000000000000000000000000000000000000000000000000000";
 
 function createTestnetApi(overrides: Record<string, string> = {}) {
   const dir = mkdtempSync(join(tmpdir(), "zguard-testnet-"));
@@ -256,6 +259,14 @@ describe("ZGuard Testnet 46630 Acceptance — Zero-fee live RHC Testnet", () => 
             value: "0",
             from: TESTNET_USDG_HOLDER,
           },
+          // QM-2: intents are compared against the exact bytes that will be signed
+          tx: {
+            chainId: 46630,
+            from: TESTNET_USDG_HOLDER,
+            to: TESTNET_USDG,
+            value: "0",
+            data: TRANSFER_PAYEE_A_ZERO,
+          },
         },
         checks: ["quote", "simulation", "token_risk"],
       }),
@@ -367,7 +378,7 @@ describe("ZGuard Testnet 46630 Acceptance — Zero-fee live RHC Testnet", () => 
     assert.ok(metaJson.codes.includes("C-SSRF"));
   });
 
-  it("§9.10: proves ZK attestation asynchronously on Testnet 46630 with BN254 verification", async () => {
+  it("§9.10: ZK attestation on Testnet 46630 stays pending (never proven) without an SP1 prover", async () => {
     const { app } = createTestnetApi();
     const reg = await app.request("/v1/register", { method: "POST" });
     const { apiKey } = (await reg.json()) as { apiKey: string };
@@ -397,12 +408,13 @@ describe("ZGuard Testnet 46630 Acceptance — Zero-fee live RHC Testnet", () => 
     assert.equal(initial.attestation?.zk?.scope, "quote");
     assert.ok(initial.decisionId);
 
+    // Gap C1/C9: the tautological "Path B" is gone. Without ZGUARD_ZK_SP1_PROVER_URL nothing is proven.
     let att: Record<string, unknown> | null = null;
     for (let i = 0; i < 20; i++) {
       const poll = await app.request(`/v1/attestation/${initial.decisionId}`);
       if (poll.status === 200) {
         const json = (await poll.json()) as Record<string, unknown>;
-        if (json.status === "proven" || json.status === "verified") {
+        if (typeof json.note === "string") {
           att = json;
           break;
         }
@@ -410,9 +422,12 @@ describe("ZGuard Testnet 46630 Acceptance — Zero-fee live RHC Testnet", () => 
       await new Promise((r) => setTimeout(r, 250));
     }
 
-    assert.ok(att, "expected async ZK attestation to reach proven status on Testnet 46630");
+    assert.ok(att, "expected the async settlement to record a note");
     assert.equal(att?.scope, "quote");
-    assert.equal(att?.bn254PrecompileVerified, true);
+    assert.equal(att?.status, "pending");
+    assert.equal(att?.proof, null);
+    assert.notEqual(att?.bn254PrecompileVerified, true);
+    assert.match(String(att?.note), /not configured/);
     const pub = att?.publicInputs as Record<string, unknown>;
     assert.equal(pub.verdict, "allow");
   });
