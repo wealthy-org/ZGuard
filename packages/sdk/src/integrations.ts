@@ -60,8 +60,10 @@ export function createPermRouterGuard(opts: DistributionGuardOptions = {}) {
 
       const guardReq: GuardRequest = {
         network: `eip155:${input.intent.chainId || activeChainId}`,
+        // Must be byte-identical to what guardEvmSigner hashes ({type:"intent", tx, intent}), otherwise
+        // the receipt's payload_hash never matches and the signer refuses (found by the C8 test).
         payload: {
-          type: "evm_tx",
+          type: "intent",
           tx: input.tx,
           intent: input.intent,
         },
@@ -156,7 +158,7 @@ export function createTerminalSwapGuard(opts: DistributionGuardOptions = {}) {
       const guardReq: GuardRequest = {
         network: reqNetwork,
         payload: {
-          type: "evm_tx",
+          type: "intent",
           tx: params.tx,
           intent: params.intent,
         },
