@@ -21,11 +21,9 @@ import {
 } from 'lucide-react';
 import { PageHeader } from '../components/PageHeader';
 import { EASE } from '../components/Reveal';
-import {
-  connectBrowserWalletToRhc,
-  postLiveGuard,
-  runGuardedWalletEip3009Demo,
-} from '../lib/zguard-api';
+import { postLiveGuard, runGuardedWalletEip3009Demo } from '../lib/zguard-api';
+import { selectChain, useWallet } from '../lib/wallet';
+import { WalletStatusCard } from '../components/WalletButton';
 
 type Dec = 'allow' | 'deny' | 'abstain';
 type ActiveChain = 46630 | 4663;
@@ -52,6 +50,9 @@ interface Scenario {
 
 const PAYEE_A = '0x000000000000000000000000000000000000aaaa';
 const PAYEE_X = '0x000000000000000000000000000000000000bbbb';
+/** transfer(0x…aaaa, 0) — the exact calldata the intent scenarios sign (gap QM-2). */
+const TRANSFER_PAYEE_A_ZERO =
+  '0xa9059cbb000000000000000000000000000000000000000000000000000000000000aaaa0000000000000000000000000000000000000000000000000000000000000000';
 
 // --- Live Verified Robinhood Chain Testnet (46630) Contracts ---
 const TESTNET_USDG = '0x7E955252E15c84f5768B83c41a71F9eba181802F';
@@ -67,7 +68,7 @@ const MAINNET_USDG_HOLDER = '0xdf5FfF9cb88B3cAb50572FAE73E2EB08599D25D4';
 const MAINNET_PONS_CURVE = '0x05811bBAF648E5FE455d527342Cb4DD03Fa21214';
 const MAINNET_AAPL_STOCK = '0xaF3D76f1834A1d425780943C99Ea8A608f8a93f9';
 
-function buildScenarios(chainId: ActiveChain): Scenario[] {
+export function buildScenarios(chainId: ActiveChain): Scenario[] {
   const isTestnet = chainId === 46630;
   const network = `eip155:${chainId}`;
   const usdg = isTestnet ? TESTNET_USDG : MAINNET_USDG;
@@ -198,6 +199,8 @@ function buildScenarios(chainId: ActiveChain): Scenario[] {
             value: '0',
             from: holder,
           },
+          // QM-2: the guard compares the intent with the exact bytes that will be signed
+          tx: { chainId, from: holder, to: usdg, value: '0', data: TRANSFER_PAYEE_A_ZERO },
         },
         checks: ['quote', 'simulation', 'token_risk'],
       },
@@ -257,6 +260,8 @@ function buildScenarios(chainId: ActiveChain): Scenario[] {
             value: '0',
             from: holder,
           },
+          // QM-2: the guard compares the intent with the exact bytes that will be signed
+          tx: { chainId, from: holder, to: usdg, value: '0', data: TRANSFER_PAYEE_A_ZERO },
         },
         checks: ['quote', 'simulation', 'token_risk'],
       },
@@ -314,6 +319,7 @@ function buildScenarios(chainId: ActiveChain): Scenario[] {
                 value: '0',
                 from: holder,
               },
+              tx: { chainId, from: holder, to: usdg, value: '0', data: TRANSFER_PAYEE_A_ZERO },
             },
             checks: ['quote', 'simulation', 'token_risk'],
           }
@@ -586,7 +592,9 @@ function JsonLine({ line }: { line: string }) {
 }
 
 export function ConsolePage() {
-  const [chainId, setChainId] = useState<ActiveChain>(46630);
+  // D3: the Testnet/Mainnet toggle is shared with the wallet store (Navbar + Console stay in sync).
+  const wallet = useWallet();
+  const chainId: ActiveChain = wallet.selectedChainId;
   const [sid, setSid] = useState('ok');
   const [customToken, setCustomToken] = useState('');
   const [phase, setPhase] = useState<'idle' | 'running' | 'done'>('idle');
@@ -596,8 +604,9 @@ export function ConsolePage() {
   const [liveView, setLiveView] = useState<ReturnType<typeof mapLiveResponseToView> | null>(null);
   const [apiMode, setApiMode] = useState<'live' | 'offline-fixture'>('live');
 
-  // Browser Wallet Testnet State
-  const [walletAddr, setWalletAddr] = useState<string | null>(null);
+  // Browser wallet (shared store, gap D3)
+  const walletAddr = wallet.address;
+  const walletOnChain = Boolean(walletAddr && wallet.walletChainId === chainId);
   const [walletBusy, setWalletBusy] = useState(false);
   const [walletStatus, setWalletStatus] = useState<string | null>(null);
 
@@ -614,7 +623,7 @@ export function ConsolePage() {
 
   const switchChain = (next: ActiveChain) => {
     clear();
-    setChainId(next);
+    void selectChain(next);
     setPhase('idle');
     setStage(0);
     setLog([]);
@@ -656,6 +665,11 @@ export function ConsolePage() {
 
     try {
       const { status, data } = await postLiveGuard(requestBody);
+      if (status >= 500) {
+        throw new Error(
+          `API unavailable (HTTP ${status}${typeof data.status === 'string' ? ` ${data.status}` : ''})`
+        );
+      }
       clear();
       setApiMode('live');
       const mapped = mapLiveResponseToView(data, sc, chainId);
@@ -670,7 +684,7 @@ export function ConsolePage() {
         `  token_risk → ${mapped.checks[2].d}${mapped.checks[2].codes.length ? ` [${mapped.checks[2].codes.join(', ')}]` : ''}`,
         `← ${status} OK (live RHC ${chainId}) · ${mapped.ms} ms · decision=${mapped.d}`,
       ]);
-    } catch {
+    } catch (err) {
       clear();
       setApiMode('offline-fixture');
       setLiveJson(fallbackResponseOf(sc, chainId));
@@ -682,27 +696,14 @@ export function ConsolePage() {
         ...sc.checks.map(
           (c, i) => `  ${CHECK_NAMES[i]} → ${c.d}${c.codes.length ? ` [${c.codes.join(', ')}]` : ''}`
         ),
-        `← offline fallback · ${sc.ms} ms · decision=${sc.d}`,
+        `✗ ${err instanceof Error ? err.message : 'API unreachable'}`,
+        `← EXAMPLE FIXTURE (not a live verdict) · decision=${sc.d}`,
       ]);
     }
   };
 
-  const handleConnectWallet = async () => {
-    setWalletBusy(true);
-    setWalletStatus(null);
-    try {
-      const res = await connectBrowserWalletToRhc(chainId);
-      setWalletAddr(res.address);
-      setWalletStatus(`Connected ${res.address.slice(0, 6)}…${res.address.slice(-4)} on RHC ${res.chainId}`);
-    } catch (err) {
-      setWalletStatus(err instanceof Error ? err.message : String(err));
-    } finally {
-      setWalletBusy(false);
-    }
-  };
-
   const handleGuardedWalletSign = async (tamperPayTo: boolean) => {
-    if (!walletAddr) return;
+    if (!walletAddr || !walletOnChain) return;
     setWalletBusy(true);
     setWalletStatus(null);
     try {
@@ -756,6 +757,9 @@ export function ConsolePage() {
         <div className="mx-auto grid max-w-7xl gap-6 px-4 sm:px-6 lg:grid-cols-12 lg:px-8">
           {/* LEFT */}
           <div className="flex flex-col gap-4 lg:col-span-4">
+            {/* D3: wallet status + connect at the top of the Console */}
+            <WalletStatusCard />
+
             {/* Chain Selector */}
             <div className="rounded-3xl border border-white/10 bg-[#070708] p-4">
               <div className="mb-2.5 flex items-center justify-between px-1 font-mono text-[10px] uppercase tracking-[0.22em] text-zinc-500">
@@ -889,6 +893,11 @@ export function ConsolePage() {
                   </>
                 )}
               </button>
+              {!walletAddr && (
+                <p className="mt-2 px-1 font-mono text-[10px] text-zinc-500" data-testid="run-connect-hint">
+                  The guard runs without a wallet. Connect one first to continue to the signer step.
+                </p>
+              )}
             </div>
 
             {/* Browser Wallet Zero-Fee Testnet Guard */}
@@ -902,16 +911,15 @@ export function ConsolePage() {
               <p className="mb-3 text-[11px] leading-relaxed text-zinc-500">
                 Connect MetaMask / Rabby on RHC {chainId} to test <code className="text-zinc-300">guardEvmSigner</code>: wallet popup opens on <span className="text-emerald-300">allow</span>, and is blocked before popup on <span className="text-rose-300">deny</span>.
               </p>
-              {!walletAddr ? (
-                <button
-                  type="button"
-                  disabled={walletBusy}
-                  onClick={handleConnectWallet}
-                  className="flex w-full items-center justify-center gap-2 rounded-xl border border-white/20 bg-black py-2.5 font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-white transition hover:border-white"
+              {!walletOnChain ? (
+                <div
+                  className="rounded-xl border border-amber-400/30 bg-amber-400/5 px-3 py-2.5 font-mono text-[10px] leading-relaxed text-amber-200"
+                  data-testid="signer-connect-hint"
                 >
-                  {walletBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wallet className="h-3.5 w-3.5" />}
-                  Connect Wallet · RHC {chainId}
-                </button>
+                  {walletAddr
+                    ? `Wallet is on chain ${wallet.walletChainId ?? '?'}: switch to RHC ${chainId} in the Wallet card above first.`
+                    : 'Connect your wallet first (Wallet card above or the navbar). Signing buttons appear once connected.'}
+                </div>
               ) : (
                 <div className="grid grid-cols-2 gap-2">
                   <button

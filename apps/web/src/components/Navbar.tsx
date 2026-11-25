@@ -5,6 +5,7 @@ import { ZGuardLogo } from './ZGuardLogo';
 import { XLogo } from './XLogo';
 import { NAV_ROUTES, ROUTES, X_URL, type Navigate, type RouteId } from '../types';
 import { fetchRuntimeConfig } from '../lib/zguard-api';
+import { WalletPill } from './WalletButton';
 
 interface NavbarProps {
   route: RouteId;
@@ -13,19 +14,21 @@ interface NavbarProps {
 
 export function Navbar({ route, navigate }: NavbarProps) {
   const [open, setOpen] = useState(false);
-  const [chainBadge, setChainBadge] = useState<{ chainId: number; isTestnet: boolean }>({
-    chainId: 46630,
-    isTestnet: true,
-  });
+  // Chain badge reflects the API's real active chain; "API OFFLINE" when /v1/config is unreachable (C3).
+  const [chainBadge, setChainBadge] = useState<{ chainId: number; isTestnet: boolean } | null>(null);
+  const [apiState, setApiState] = useState<'checking' | 'online' | 'offline'>('checking');
 
   useEffect(() => {
     fetchRuntimeConfig()
       .then((cfg) => {
         if (cfg && cfg.chainId) {
           setChainBadge({ chainId: cfg.chainId, isTestnet: cfg.isTestnet });
+          setApiState('online');
+        } else {
+          setApiState('offline');
         }
       })
-      .catch(() => undefined);
+      .catch(() => setApiState('offline'));
   }, []);
 
   const go = (id: RouteId) => {
@@ -58,11 +61,21 @@ export function Navbar({ route, navigate }: NavbarProps) {
               <div className="mt-1 flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-[0.16em] text-zinc-400">
                 <span
                   className={`h-1.5 w-1.5 rounded-full ${
-                    chainBadge.isTestnet ? 'bg-emerald-400' : 'bg-sky-400'
+                    apiState === 'offline'
+                      ? 'bg-rose-400'
+                      : apiState === 'checking'
+                        ? 'bg-zinc-500'
+                        : chainBadge?.isTestnet
+                          ? 'bg-emerald-400'
+                          : 'bg-sky-400'
                   }`}
                 />
-                <span className="truncate">
-                  RHC · {chainBadge.chainId} {chainBadge.isTestnet ? 'TESTNET' : 'MAINNET'}
+                <span className="truncate" data-testid="chain-badge">
+                  {apiState === 'offline'
+                    ? 'API OFFLINE'
+                    : chainBadge
+                      ? `RHC · ${chainBadge.chainId} ${chainBadge.isTestnet ? 'TESTNET' : 'MAINNET'}`
+                      : 'RHC · …'}
                 </span>
               </div>
             </div>
@@ -98,6 +111,7 @@ export function Navbar({ route, navigate }: NavbarProps) {
           </nav>
 
           <div className="flex shrink-0 items-center gap-2">
+            <WalletPill />
             <a
               href={X_URL}
               target="_blank"
@@ -140,6 +154,15 @@ export function Navbar({ route, navigate }: NavbarProps) {
           </div>
         </div>
       </div>
+
+      {apiState === 'offline' && (
+        <div className="mx-auto mt-2 max-w-7xl px-3 sm:px-6 lg:px-8" data-testid="api-offline-banner">
+          <div className="rounded-2xl border border-rose-400/30 bg-rose-950/70 px-4 py-2 font-mono text-[10px] leading-relaxed text-rose-100 backdrop-blur-xl sm:text-[11px]">
+            Live API unreachable or not configured (web needs ZGUARD_INTERNAL_API_URL). Console results are example
+            fixtures, not live verdicts.
+          </div>
+        </div>
+      )}
 
       <AnimatePresence>
         {open && (
