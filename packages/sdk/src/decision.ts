@@ -17,6 +17,12 @@ export interface AggregationInput {
     content?: ContentCheckResult;
   };
   modes?: Partial<Record<CheckName, CheckMode>>;
+  /**
+   * Checks the caller (server policy) REQUIRES to have been executed. Any name listed here that is
+   * missing from `checks` is treated as a required `abstain` ("not executed"), and its mode is forced
+   * to `required` regardless of `modes`. This stops clients from dropping required checks (gap C4).
+   */
+  requiredChecks?: CheckName[];
   ttlSeconds?: number;
   nowMs?: number;
 }
@@ -51,6 +57,10 @@ export function aggregateDecision(input: AggregationInput): AggregatedDecision {
     content: "advisory",
     ...input.modes,
   };
+  const enforced = input.requiredChecks ?? [];
+  for (const name of enforced) {
+    defaultModes[name] = "required";
+  }
 
   const ttlSeconds = input.ttlSeconds ?? 120;
   const nowMs = input.nowMs ?? Date.now();
@@ -58,6 +68,8 @@ export function aggregateDecision(input: AggregationInput): AggregatedDecision {
   const entries = Object.entries(input.checks).filter(
     ([, val]) => val !== undefined
   ) as Array<[CheckName, { decision: Decision; codes: ReasonCode[] }]>;
+
+  const missingRequired = enforced.filter((name) => input.checks[name] === undefined);
 
   if (entries.length === 0) {
     return {
@@ -74,6 +86,10 @@ export function aggregateDecision(input: AggregationInput): AggregatedDecision {
   const requiredDenies: string[] = [];
   const requiredAbstains: string[] = [];
   const requiredAllows: string[] = [];
+
+  for (const name of missingRequired) {
+    requiredAbstains.push(`${name} not executed (required by server policy)`);
+  }
 
   for (const [name, result] of entries) {
     const mode = defaultModes[name] ?? "required";

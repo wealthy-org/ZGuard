@@ -12,10 +12,13 @@ import {
   isSupportedRhcChainId,
   parseChainIdFromNetwork,
   type ChargedInfo,
+  type CheckMode,
+  type CheckName,
   type GuardRequest,
   type GuardResponse,
+  getEip712DomainStatus,
 } from "@zguard/sdk";
-import { buildInitialZkAttestation, proveQuoteAttestationAsync } from "@zguard/zk";
+import { buildInitialZkAttestation, buildSp1GuestInput, proveQuoteAttestationAsync } from "@zguard/zk";
 import { loadConfig, type ZGuardAppConfig } from "./config.js";
 import {
   StorageUnavailableError,
@@ -33,7 +36,39 @@ import { checkSequencerHealth } from "./services/sequencer.js";
 import { simulateOnRhc } from "./services/simulate.js";
 import { evaluateTokenRiskRhc } from "./services/token-risk.js";
 import { scanContentWithRemoteUrl } from "./services/url-scanner.js";
-import { buildX402Quote, verifyAndConsumeXPayment } from "./services/x402.js";
+import {
+  LatencyRecorder,
+  MemoryRateLimiter,
+  clientIp,
+  isPublicReadRoute,
+  routeLabel,
+  safeEqual,
+} from "./services/ops.js";
+import {
+  buildX402Quote,
+  peekXPaymentPayer,
+  resolveSettlementMode,
+  verifyAndConsumeXPayment,
+} from "./services/x402.js";
+
+const KNOWN_CHECKS: CheckName[] = ["quote", "simulation", "token_risk", "content"];
+
+/**
+ * Merges client-supplied check modes so they can only TIGHTEN server policy (advisory -> required),
+ * never loosen it (required -> advisory). Gap C4.
+ */
+export function tightenCheckModes(
+  serverModes: Record<CheckName, CheckMode>,
+  clientModes?: Partial<Record<CheckName, CheckMode>> | null
+): Record<CheckName, CheckMode> {
+  const out = { ...serverModes };
+  if (clientModes && typeof clientModes === "object") {
+    for (const name of KNOWN_CHECKS) {
+      if (clientModes[name] === "required") out[name] = "required";
+    }
+  }
+  return out;
+}
 
 export interface AppDependencies {
   config?: ZGuardAppConfig;
@@ -69,23 +104,76 @@ export function createZGuardApp(deps: AppDependencies = {}): {
   }
 
   // Kick off non-blocking USDG EIP-712 onchain domain check on both Testnet 46630 & Mainnet 4663 + registry warm-up
-  refreshVerifiedUsdgDomain(testnetClient, RHC_TESTNET_CHAIN_ID).catch(() => undefined);
-  refreshVerifiedUsdgDomain(mainnetClient, RHC_MAINNET_CHAIN_ID).catch(() => undefined);
+  refreshVerifiedUsdgDomain(testnetClient, RHC_TESTNET_CHAIN_ID)
+    .then((st) => {
+      if (st?.status === "mismatch") {
+        console.error(`[zguard] USDG EIP-712 domain on ${RHC_TESTNET_CHAIN_ID} differs from pinned constant; EIP-3009 disabled (Q-007)`);
+      }
+    })
+    .catch(() => undefined);
+  if (config.activeChainId === RHC_MAINNET_CHAIN_ID) {
+    refreshVerifiedUsdgDomain(mainnetClient, RHC_MAINNET_CHAIN_ID).catch(() => undefined);
+  }
   registry.ensureFresh().catch(() => undefined);
 
   const activeProfile = getRhcChainProfile(config.activeChainId);
 
   const app = new Hono();
 
-  app.use(
-    "*",
-    cors({
-      origin: "*",
-      allowHeaders: ["Content-Type", "Authorization", "X-API-Key", "X-PAYMENT"],
-      exposeHeaders: ["X-PAYMENT-RESPONSE"],
+  const metrics = new LatencyRecorder();
+  const globalLimiter = new MemoryRateLimiter(config.rateLimitPerMinute, 60);
+  const devCorsAny = !config.isProduction && config.corsOrigins.length === 0;
+
+  // Latency metrics + Server-Timing (brief: report p95 < 800 ms)
+  app.use("*", async (c, next) => {
+    const t0 = performance.now();
+    await next();
+    const ms = performance.now() - t0;
+    metrics.record(`${c.req.method} ${routeLabel(c.req.path)}`, ms, c.res.status);
+    try {
+      c.res.headers.set("Server-Timing", `app;dur=${ms.toFixed(1)}`);
+    } catch {
+      // immutable response headers (rare) — metrics still recorded
+    }
+  });
+
+  // CORS (C6-table): free public read routes are open to any origin; keyed/paid routes only to the
+  // configured allowlist (ZGUARD_CORS_ORIGINS). The web app calls the API same-origin through its
+  // Next.js rewrite, so it needs no CORS at all. Local dev without an allowlist stays permissive.
+  app.use("*", async (c, next) => {
+    const publicRoute = isPublicReadRoute(c.req.method, c.req.path);
+    const handler = cors({
+      origin: (origin) => {
+        if (!origin) return null;
+        if (publicRoute || devCorsAny) return "*";
+        return config.corsOrigins.includes(origin.replace(/\/+$/, "")) ? origin : null;
+      },
+      allowHeaders: ["Content-Type", "Authorization", "X-API-Key", "X-PAYMENT", "X-Admin-Key"],
+      exposeHeaders: ["X-PAYMENT-RESPONSE", "Retry-After", "Server-Timing"],
       allowMethods: ["GET", "POST", "OPTIONS"],
-    })
-  );
+      maxAge: 600,
+    });
+    return handler(c, next);
+  });
+
+  // Global per-IP rate limit (C6-table "tidak ada rate limit global")
+  app.use("*", async (c, next) => {
+    if (c.req.method === "OPTIONS" || c.req.path === "/health") return next();
+    const verdict = globalLimiter.hit(`ip:${clientIp(c)}`);
+    if (!verdict.allowed) {
+      c.header("Retry-After", String(verdict.resetSec));
+      return c.json(
+        { error: "Rate limit exceeded", limitPerMinute: config.rateLimitPerMinute },
+        429
+      );
+    }
+    return next();
+  });
+
+  /** Admin requests carry `x-admin-key` equal to ZGUARD_ADMIN_API_KEY (constant-time compare). */
+  function isAdmin(c: Context): boolean {
+    return Boolean(config.adminApiKey) && safeEqual(c.req.header("x-admin-key"), config.adminApiKey);
+  }
 
   /**
    * Billing & Auth Gate for paid endpoints (§4.3, §5.1, §8.1, §9 #7):
@@ -210,6 +298,18 @@ export function createZGuardApp(deps: AppDependencies = {}): {
     return (chargedMicro * BigInt(config.buybackRevenueBps)) / 10_000n;
   }
 
+  /** Checks the server policy marks `required` (never influenced by the request body). */
+  function requiredChecksFromConfig(): CheckName[] {
+    return KNOWN_CHECKS.filter((n) => config.checkModes[n] === "required");
+  }
+
+  /** Clients may shorten the allow TTL but never extend it past the server's configured TTL. */
+  function clampTtl(requested: unknown): number {
+    const n = Number(requested);
+    if (!Number.isFinite(n) || n <= 0) return config.allowTtlSeconds;
+    return Math.min(Math.floor(n), config.allowTtlSeconds);
+  }
+
   // --- Health & Open Config Readout ---
   app.get("/health", async (c) => {
     const seq = await checkSequencerHealth(config, rhcClient, config.activeChainId).catch(
@@ -231,14 +331,15 @@ export function createZGuardApp(deps: AppDependencies = {}): {
 
   app.get("/v1/config", async (c) => {
     await registry.ensureFresh().catch(() => undefined);
+    const admin = isAdmin(c);
     const [revenue, sequencer] = await Promise.all([
-      store.getRevenueSummary().catch(() => ({
-        totalChargedMicroUsdg: "0",
-        totalBuybackMicroUsdg: "0",
-        receiptCount: 0,
-      })),
+      // STORE-1: the global revenue ledger is admin-only
+      admin
+        ? store.getRevenueSummary().catch(() => null)
+        : Promise.resolve(null),
       checkSequencerHealth(config, rhcClient, config.activeChainId).catch(() => null),
     ]);
+    const settlement = resolveSettlementMode(config);
 
     return c.json({
       productName: config.productName,
@@ -267,9 +368,14 @@ export function createZGuardApp(deps: AppDependencies = {}): {
         usdgRhc4663: getRhcChainProfile(RHC_MAINNET_CHAIN_ID).usdgAddress,
         payTo: config.x402PayTo,
         settlementMode: config.x402SettlementMode,
+        effectiveSettlementMode: settlement.ok ? settlement.mode : "unavailable",
+        settlementError: settlement.ok ? null : settlement.error,
+        minConfirmations: config.x402MinConfirmations,
         relayerConfigured: Boolean(config.x402RelayerPrivateKey),
         usdcBaseEnabled: config.enableUsdcBase,
         usdcSolanaEnabled: config.enableUsdcSolana,
+        // QM-6: pinned EIP-712 domain vs live contract ("mismatch" => EIP-3009 refused with Q-007)
+        usdgEip712Domain: getEip712DomainStatus(config.activeChainId, activeProfile.usdgAddress),
       },
       policy: {
         checkModes: config.checkModes,
@@ -284,7 +390,14 @@ export function createZGuardApp(deps: AppDependencies = {}): {
         buybackWallet: config.buybackWallet,
         burnAddress: config.burnAddress,
         buybackRevenueBps: config.buybackRevenueBps,
+        // Global ledger only for admins (x-admin-key); tenants see their own totals via /v1/receipts
         ledger: revenue,
+      },
+      security: {
+        corsRestricted: !devCorsAny,
+        rateLimitPerMinute: config.rateLimitPerMinute,
+        registerLimitPerIpPerHour: config.registerLimitPerIpPerHour,
+        freeCreditMicroUsdg: config.devFreeCreditMicroUsdg.toString(),
       },
       zk: {
         enabled: config.zkEnabled,
@@ -292,6 +405,8 @@ export function createZGuardApp(deps: AppDependencies = {}): {
         halo2Enabled: config.zkHalo2Enabled,
         scope: "quote",
         verifierAddress: config.zkVerifierAddress,
+        sp1ProverConfigured: Boolean(config.zkSp1ProverUrl),
+        programVKeyIsPlaceholder: !config.zkProgramVKey,
         onchainBroadcastEnabled: Boolean(
           config.zkVerifierAddress && config.zkVerifierPrivateKey
         ),
@@ -326,6 +441,53 @@ export function createZGuardApp(deps: AppDependencies = {}): {
   app.post("/v1/register", async (c) => {
     let initialCredit = config.devFreeCreditMicroUsdg;
     const xPayment = c.req.header("x-payment");
+
+    // C5: store-backed limits (shared across serverless instances) per IP and per payer.
+    try {
+      if (config.registerLimitPerIpPerHour > 0) {
+        const ipHit = await store.hitRateLimit(
+          `register:ip:${clientIp(c)}`,
+          3600,
+          config.registerLimitPerIpPerHour
+        );
+        if (!ipHit.allowed) {
+          c.header("Retry-After", String(Math.max(1, Math.ceil((Date.parse(ipHit.resetAt) - Date.now()) / 1000))));
+          return c.json(
+            {
+              error: "Too many registrations from this IP. Try again later.",
+              limitPerHour: config.registerLimitPerIpPerHour,
+              resetAt: ipHit.resetAt,
+            },
+            429
+          );
+        }
+      }
+      if (xPayment && config.registerLimitPerPayerPerHour > 0) {
+        const payer = await peekXPaymentPayer(xPayment, config.activeChainId);
+        if (payer) {
+          const payerHit = await store.hitRateLimit(
+            `register:payer:${payer}`,
+            3600,
+            config.registerLimitPerPayerPerHour
+          );
+          if (!payerHit.allowed) {
+            return c.json(
+              {
+                error: "Too many registrations for this payer. Try again later.",
+                limitPerHour: config.registerLimitPerPayerPerHour,
+                resetAt: payerHit.resetAt,
+              },
+              429
+            );
+          }
+        }
+      }
+    } catch (err) {
+      if (err instanceof StorageUnavailableError) {
+        return c.json({ error: "Registration temporarily unavailable (storage)" }, 503);
+      }
+      throw err;
+    }
 
     if (xPayment) {
       const verified = await verifyAndConsumeXPayment({
@@ -394,33 +556,48 @@ export function createZGuardApp(deps: AppDependencies = {}): {
   });
 
   // --- Tenant Receipt / Decision Log Endpoint (§8.1 simple receipt/dashboard) ---
-  app.get("/v1/receipts", async (c) => {
-    const rawKey = extractBearerKey(c);
-    let tenantId: string | null = null;
-    let tenantSummary: Record<string, unknown> | null = null;
+  // STORE-1: API key required; a tenant only ever sees its own receipts and totals.
+  // The global ledger (all tenants) is available only with `x-admin-key` = ZGUARD_ADMIN_API_KEY.
+  app.get("/v1/metrics", (c) => {
+    return c.json({ latency: metrics.snapshot(), targetP95Ms: 800 });
+  });
 
-    if (rawKey) {
-      const tenant = await store.getTenantByApiKey(rawKey);
-      if (!tenant) {
-        return c.json({ error: "Invalid API key" }, 401);
+  app.get("/v1/receipts", async (c) => {
+    const limit = Math.max(1, Math.min(Number(c.req.query("limit") || 25) || 25, 100));
+    const rawKey = extractBearerKey(c);
+
+    if (!rawKey) {
+      if (isAdmin(c)) {
+        const [receipts, revenue] = await Promise.all([
+          store.listReceipts(null, limit),
+          store.getRevenueSummary(),
+        ]);
+        return c.json({ scope: "admin-global", tenant: null, revenue, receipts });
       }
-      tenantId = tenant.id;
-      tenantSummary = {
+      return c.json(
+        { error: "Missing API key. Send Authorization: Bearer <apiKey> (from POST /v1/register)." },
+        401
+      );
+    }
+
+    const tenant = await store.getTenantByApiKey(rawKey);
+    if (!tenant) {
+      return c.json({ error: "Invalid API key" }, 401);
+    }
+
+    const [receipts, revenue] = await Promise.all([
+      store.listReceipts(tenant.id, limit),
+      store.getRevenueSummary(tenant.id),
+    ]);
+
+    return c.json({
+      scope: "tenant",
+      tenant: {
         tenantId: tenant.id,
         apiKeyHint: tenant.apiKeyHint,
         creditMicroUsdg: tenant.creditMicroUsdg.toString(),
         totalSpentMicroUsdg: tenant.totalSpentMicroUsdg.toString(),
-      };
-    }
-
-    const limit = Math.min(Number(c.req.query("limit") || 25), 100);
-    const [receipts, revenue] = await Promise.all([
-      store.listReceipts(tenantId, limit),
-      store.getRevenueSummary(),
-    ]);
-
-    return c.json({
-      tenant: tenantSummary,
+      },
       revenue,
       receipts,
     });
@@ -530,7 +707,7 @@ export function createZGuardApp(deps: AppDependencies = {}): {
       const agg = aggregateDecision({
         checks: { quote: quoteRes },
         modes: { quote: "required" },
-        ttlSeconds: body.options?.ttlSeconds ?? config.allowTtlSeconds,
+        ttlSeconds: clampTtl(body.options?.ttlSeconds),
       });
 
       const decisionId = `dec_${randomUUID().replace(/-/g, "").slice(0, 20)}`;
@@ -551,6 +728,7 @@ export function createZGuardApp(deps: AppDependencies = {}): {
           quoteVerdict: quoteRes.decision,
           quoteCodes: quoteRes.codes,
           verifierAddress: config.zkVerifierAddress,
+          programVKeyOverride: config.zkProgramVKey,
         });
       }
 
@@ -590,6 +768,7 @@ export function createZGuardApp(deps: AppDependencies = {}): {
           sp1ProverUrl: config.zkSp1ProverUrl ?? undefined,
           verifierAddress: config.zkVerifierAddress ?? undefined,
           verifierPrivateKey: config.zkVerifierPrivateKey ?? undefined,
+          guestInput: buildSp1GuestInput({ network, quote: body.quote, payload: body.payload }, quoteRes.codes),
           onUpdated: (upd) => store.upsertZkAttestation(upd),
         });
       }
@@ -638,7 +817,7 @@ export function createZGuardApp(deps: AppDependencies = {}): {
     const agg = aggregateDecision({
       checks: { simulation: simRes },
       modes: { simulation: "required" },
-      ttlSeconds: body.options?.ttlSeconds ?? config.allowTtlSeconds,
+      ttlSeconds: clampTtl(body.options?.ttlSeconds),
     });
 
     const decisionId = `dec_${randomUUID().replace(/-/g, "").slice(0, 20)}`;
@@ -867,7 +1046,15 @@ export function createZGuardApp(deps: AppDependencies = {}): {
         );
       }
 
-      const requestedChecks = body.checks ?? ["quote", "simulation", "token_risk"];
+      // C4: the SERVER decides which checks are required (ZGUARD_REQUIRED_CHECKS). The request body may
+      // only ADD checks (e.g. "content"); it can never drop a required one.
+      const serverRequired = requiredChecksFromConfig();
+      const clientRequested = Array.isArray(body.checks)
+        ? body.checks.filter((n): n is CheckName => KNOWN_CHECKS.includes(n as CheckName))
+        : [];
+      const requestedChecks: CheckName[] = Array.from(
+        new Set<CheckName>([...serverRequired, ...clientRequested])
+      );
       const chainId = parseChainIdFromNetwork(body.network);
 
       // §5.2: Full guard requires Robinhood Chain (Testnet 46630 or Mainnet 4663), unless quote-only check on enabled payment rail
@@ -974,16 +1161,22 @@ export function createZGuardApp(deps: AppDependencies = {}): {
         };
       }
 
-      const activeModes = {
-        ...config.checkModes,
-        content: requestedChecks.includes("content") ? "required" : "advisory",
-        ...body.options?.checkModes,
-      } as const;
+      const activeModes = tightenCheckModes(
+        {
+          ...config.checkModes,
+          content:
+            config.checkModes.content === "required" || clientRequested.includes("content")
+              ? "required"
+              : "advisory",
+        },
+        body.options?.checkModes
+      );
 
       const agg = aggregateDecision({
         checks: checksOut,
         modes: activeModes,
-        ttlSeconds: body.options?.ttlSeconds ?? config.allowTtlSeconds,
+        requiredChecks: serverRequired,
+        ttlSeconds: clampTtl(body.options?.ttlSeconds),
       });
 
       const decisionId = `dec_${randomUUID().replace(/-/g, "").slice(0, 20)}`;
@@ -1007,6 +1200,7 @@ export function createZGuardApp(deps: AppDependencies = {}): {
           quoteVerdict: checksOut.quote.decision,
           quoteCodes: checksOut.quote.codes,
           verifierAddress: config.zkVerifierAddress,
+          programVKeyOverride: config.zkProgramVKey,
         });
       }
 
@@ -1043,6 +1237,10 @@ export function createZGuardApp(deps: AppDependencies = {}): {
           sp1ProverUrl: config.zkSp1ProverUrl ?? undefined,
           verifierAddress: config.zkVerifierAddress ?? undefined,
           verifierPrivateKey: config.zkVerifierPrivateKey ?? undefined,
+          guestInput: buildSp1GuestInput(
+            { network: body.network, quote: body.quote, payload: body.payload },
+            checksOut.quote?.codes ?? []
+          ),
           onUpdated: (upd) => store.upsertZkAttestation(upd),
         });
       }
