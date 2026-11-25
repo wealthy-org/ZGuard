@@ -24,6 +24,7 @@ import { EASE } from '../components/Reveal';
 import { postLiveGuard, runGuardedWalletEip3009Demo } from '../lib/zguard-api';
 import { selectChain, useWallet } from '../lib/wallet';
 import { WalletStatusCard } from '../components/WalletButton';
+import { BuyCreditCard } from '../components/BuyCreditCard';
 
 type Dec = 'allow' | 'deny' | 'abstain';
 type ActiveChain = 46630 | 4663;
@@ -946,6 +947,9 @@ export function ConsolePage() {
                 </div>
               )}
             </div>
+
+            {/* I9 #17: real USDG top-up (x402 deposit mode) */}
+            <BuyCreditCard chainId={chainId} />
 
             <div className="min-h-[150px] rounded-3xl border border-white/10 bg-black p-4 font-mono text-[11px] leading-[1.75]">
               <div className="mb-2 flex items-center justify-between border-b border-white/10 pb-2 text-[9px] uppercase tracking-[0.22em] text-zinc-600">
