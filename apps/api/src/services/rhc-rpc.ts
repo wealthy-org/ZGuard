@@ -14,6 +14,8 @@ import {
   RHC_TESTNET_ASSETS,
   RHC_TESTNET_CHAIN_ID,
   verifyContractEip712DomainOnchain,
+  pinEip712DomainAgainstChain,
+  getEip712DomainStatus,
 } from "@zguard/sdk";
 import type { ZGuardAppConfig } from "../config.js";
 
@@ -124,10 +126,13 @@ export async function rawRhcRpc<T = unknown>(
 export async function refreshVerifiedUsdgDomain(
   client: PublicClient,
   chainId: number = RHC_TESTNET_CHAIN_ID
-): Promise<void> {
+): Promise<ReturnType<typeof getEip712DomainStatus>> {
   const addr =
     chainId === RHC_MAINNET_CHAIN_ID
       ? RHC_CANONICAL_ASSETS.USDG.address
       : RHC_TESTNET_ASSETS.USDG.address;
-  await verifyContractEip712DomainOnchain(client, chainId, addr).catch(() => undefined);
+  // QM-6: compare the pinned constant with the live contract; a mismatch disables the domain (Q-007).
+  await verifyContractEip712DomainOnchain(client, chainId, addr).catch(() => null);
+  await pinEip712DomainAgainstChain(client, chainId, addr);
+  return getEip712DomainStatus(chainId, addr);
 }

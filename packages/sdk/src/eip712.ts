@@ -112,15 +112,88 @@ export function computeEip712DomainSeparator(params: {
   );
 }
 
+/**
+ * QM-6: provenance of every registry entry. Seeded constants are only a starting point; at startup the
+ * API reads the live contract and either confirms the constant ("onchain-verified") or marks the
+ * domain "mismatch", after which it is refused (Q-007) until the code constant is fixed.
+ */
+export type Eip712DomainStatus = "seeded" | "onchain-verified" | "mismatch" | "unreachable";
+
+const domainStatus = new Map<string, { status: Eip712DomainStatus; checkedAt: number; onchainSeparator?: string }>();
+domainStatus.set(domainKey(RHC_MAINNET_CHAIN_ID, RHC_CANONICAL_ASSETS.USDG.address), { status: "seeded", checkedAt: 0 });
+domainStatus.set(domainKey(RHC_TESTNET_CHAIN_ID, RHC_TESTNET_ASSETS.USDG.address), { status: "seeded", checkedAt: 0 });
+
 export function registerVerifiedEip712Domain(domain: VerifiedEip712Domain): void {
-  domainRegistry.set(domainKey(domain.chainId, domain.verifyingContract), domain);
+  const key = domainKey(domain.chainId, domain.verifyingContract);
+  const seeded = domainRegistry.get(key);
+  const prev = domainStatus.get(key);
+  if (
+    seeded &&
+    (prev?.status === "seeded" || prev?.status === "mismatch" || prev?.status === "unreachable") &&
+    seeded.domainSeparator.toLowerCase() !== domain.domainSeparator.toLowerCase()
+  ) {
+    // Never silently replace a pinned constant with whatever the chain says (and vice versa): fail closed.
+    domainStatus.set(key, { status: "mismatch", checkedAt: Date.now(), onchainSeparator: domain.domainSeparator });
+    return;
+  }
+  domainRegistry.set(key, { ...seeded, ...domain, supportsEip3009: domain.supportsEip3009 || Boolean(seeded?.supportsEip3009) });
+  domainStatus.set(key, { status: "onchain-verified", checkedAt: Date.now(), onchainSeparator: domain.domainSeparator });
 }
 
+/**
+ * QM-6 strict pin: read DOMAIN_SEPARATOR() from the live contract and compare with the seeded
+ * constant. Returns the resulting status. Network errors leave the entry "unreachable".
+ */
+export async function pinEip712DomainAgainstChain(
+  client: PublicClient,
+  chainId: number,
+  contract: `0x${string}`
+): Promise<Eip712DomainStatus> {
+  const key = domainKey(chainId, contract);
+  const seeded = domainRegistry.get(key);
+  let onchain: `0x${string}`;
+  try {
+    onchain = (await client.readContract({
+      address: contract,
+      abi: parseAbi(["function DOMAIN_SEPARATOR() view returns (bytes32)"]),
+      functionName: "DOMAIN_SEPARATOR",
+    })) as `0x${string}`;
+  } catch {
+    markEip712DomainUnreachable(chainId, contract);
+    return domainStatus.get(key)?.status ?? "unreachable";
+  }
+  if (seeded && seeded.domainSeparator.toLowerCase() !== onchain.toLowerCase()) {
+    domainStatus.set(key, { status: "mismatch", checkedAt: Date.now(), onchainSeparator: onchain });
+    return "mismatch";
+  }
+  if (domainStatus.get(key)?.status !== "mismatch") {
+    domainStatus.set(key, { status: "onchain-verified", checkedAt: Date.now(), onchainSeparator: onchain });
+  }
+  return domainStatus.get(key)!.status;
+}
+
+export function markEip712DomainUnreachable(chainId: number, contract: string): void {
+  const key = domainKey(chainId, contract);
+  const prev = domainStatus.get(key);
+  if (prev && prev.status !== "seeded") return;
+  domainStatus.set(key, { status: "unreachable", checkedAt: Date.now() });
+}
+
+export function getEip712DomainStatus(
+  chainId: number,
+  contract: string
+): { status: Eip712DomainStatus; checkedAt: number; onchainSeparator?: string } | null {
+  return domainStatus.get(domainKey(chainId, contract)) ?? null;
+}
+
+/** Returns the domain only when it is not in "mismatch" state. */
 export function getVerifiedEip712Domain(
   chainId: number,
   contract: string
 ): VerifiedEip712Domain | null {
-  return domainRegistry.get(domainKey(chainId, contract)) ?? null;
+  const key = domainKey(chainId, contract);
+  if (domainStatus.get(key)?.status === "mismatch") return null;
+  return domainRegistry.get(key) ?? null;
 }
 
 /**
