@@ -380,7 +380,8 @@ if (r.decision !== "allow") {
   "flags": [],
   "charged": { "asset": "USDG", "amount": "15000", "unit": "micro" },
   "attestation": { "zk": { "system": "groth16-sp1 | groth16-risc0 | halo2-kzg",
-                           "scope": "quote", "status": "pending | proven | verified", … } }
+                           "scope": "quote", "status": "pending | proven | verified | failed",
+  "note": "why it is still pending (e.g. SP1 prover not configured)", … } }
 }`}
               />
               <P>Reason codes (prefixes deliberately differ from the reference’s <code className="font-mono">X402-</code>):</P>
@@ -500,23 +501,39 @@ if (r.decision !== "allow") {
             {/* 08 Billing */}
             <Section id="billing" num="08" title="x402 billing">
               <P>
-                Prepaid per call, no subscription, no minimum. Payment rail: USDG on <code className="font-mono text-white">eip155:4663</code> is
-                required; USDC on Base and Solana optional. When credit runs dry the API answers HTTP 402 with a payable quote.
+                Prepaid per call, no subscription, no minimum. Payment rail: USDG on the active chain (testnet{' '}
+                <code className="font-mono text-white">eip155:46630</code> today). When credit runs dry the API answers HTTP 402
+                with a payable quote. Credit is added only after USDG has really moved onchain, with{' '}
+                <code className="font-mono text-white">ZGUARD_X402_MIN_CONFIRMATIONS</code> (default 3) confirmations. A signature
+                alone never creates credit.
               </P>
               <CodeBlock
                 title="billing loop"
                 code={`1. POST /v1/guard with no credit
-2. ← 402 + x402 quote { network: "eip155:4663", asset: USDG, amount, payTo }
-3. agent pays the quote (x402 exact)
-4. credit applied · request replayed
+2. ← 402 + x402 quote { network: "eip155:46630", asset: USDG, amount, payTo, settlement.mode }
+3. agent pays (mode "onchain" or "deposit", see below)
+4. credit applied after confirmations · request replayed
 5. ← 200 + decision + payload_hash + expires_at
 
 local quote-match: free, offline, no key — always`}
               />
+              <CodeBlock
+                title="settlement modes"
+                code={`onchain  · X-PAYMENT = signed EIP-3009 transferWithAuthorization
+           the relayer broadcasts it; credit only if the receipt succeeds
+deposit  · no relayer needed
+           1. send USDG to payTo yourself
+           2. sign (EIP-191, same wallet):
+              "ZGuard credit claim\\ntx:<txHash lowercase>\\nchain:<chainId>"
+           3. X-PAYMENT: {"network":"eip155:46630",
+                          "payload":{"txHash":"0x…","claimSignature":"0x…"}}
+           credit = USDG transferred from the signer to payTo; each tx is claimable once
+offchain · dev only, refused when NODE_ENV=production`}
+              />
               <Note kind="assume">
                 Revenue model: 100% of net hosted-API revenue to buyback and burn of the pons-launched product token
                 ($ZGUARD ticker unconfirmed) after launch, unless an operational treasury share is set. Burn address
-                0x000000000000000000000000000000000000dEaD. The reference’s $WORM addresses are never used.
+                0x000000000000000000000000000000000000dEaD. Third-party reference token addresses are never used.
               </Note>
             </Section>
 
@@ -530,8 +547,8 @@ local quote-match: free, offline, no key — always`}
               <Table
                 head={['Path', 'System', 'Status']}
                 rows={[
-                  ['1', 'Groth16 on BN254 — rule engine in Rust inside a zkVM (SP1 or RISC Zero), STARK wrapped to Groth16, verified by a contract on 4663', 'required · MVP'],
-                  ['2', 'Halo2-KZG — hand-written circuit (payTo, amount, asset, chainId → commitment), PSE fork, Solidity verifier via snark-verifier, universal powers-of-tau setup', 'target · MVP'],
+                  ['1', 'Groth16 on BN254 — rule engine in Rust inside a zkVM (SP1 or RISC Zero), STARK wrapped to Groth16, verified by ZGuardQuoteVerifier (testnet 46630 first)', 'scaffold · prover not deployed'],
+                  ['2', 'Halo2-KZG — hand-written circuit (payTo, amount, asset, chainId → commitment), PSE fork, Solidity verifier via snark-verifier, universal powers-of-tau setup', 'skeleton · not available'],
                 ]}
               />
               <CodeBlock
@@ -545,7 +562,8 @@ local quote-match: free, offline, no key — always`}
                     "verdict": "allow|deny|abstain", "ruleCodes": […] },
   "verifierAddress": "0x…",
   "verifyTx": "0x…",
-  "status": "pending | proven | verified"
+  "status": "pending | proven | verified | failed",
+  "note": "why it is still pending (e.g. SP1 prover not configured)"
 }`}
               />
               <Note kind="verify">
@@ -594,9 +612,9 @@ local quote-match: free, offline, no key — always`}
                   'TypeScript SDK: offline quote-match + API client + EVM signer wrapper for USDG/x402 and routine RHC txs.',
                   'One MCP server with the five tools, working in Claude Code and Cursor at minimum (OpenClaw once the host is verified).',
                   'Three checks in POST /v1/guard on chain 4663; asset awareness for USDG, WETH, registry Stock Tokens, pons V1/V2 curve and graduated v4 pools, PoolManager v4.',
-                  'Default-on in Perm and the RHC/pons terminal: no guard call, no signature — disabling it in dev must fail visibly, never silently.',
+                  'Default-on in Perm and the RHC/pons terminal: no guard call, no signature — disabling it in dev must fail visibly, never silently. Status today: SDK helpers + tests (enabled:false throws GuardDisabledError); repo integrations pending.',
                   'x402 billing in USDG on RHC; receipt/dashboard page (balance, decision log, payload hashes) — not a social product.',
-                  'zk layer: Groth16 (required) and Halo2-KZG (target), verifier on 4663, async attestation.zk.',
+                  'zk layer: Groth16 (required) and Halo2-KZG (target), verifier on 4663, async attestation.zk. Status today: SP1 guest scaffold, verifier not deployed, attestations pending.',
                 ].map((t) => (
                   <li key={t} className="flex gap-3 text-[13px] text-zinc-300">
                     <Check className="mt-1 h-3.5 w-3.5 shrink-0 text-white" strokeWidth={2.5} />

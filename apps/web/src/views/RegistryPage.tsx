@@ -21,7 +21,6 @@ const MAINNET_USDG = '0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168';
 const MAINNET_WETH = '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73';
 const MAINNET_AAPL = '0xaF3D76f1834A1d425780943C99Ea8A608f8a93f9';
 const MAINNET_PONS_CURVE = '0x05811bBAF648E5FE455d527342Cb4DD03Fa21214';
-const MAINNET_PONS_GRAD = '0x3bA500F1AbabbCF0F0247D06D1c56Fd7E6C4c09D';
 const POOL_MANAGER = '0x8366a39CC670B4001A1121B8F6A443A643e40951';
 const PONS_FACTORY_V2 = '0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e';
 const PONS_FACTORY_V1 = '0xA5aAb3F0c6EeadF30Ef1D3Eb997108E976351feB';
@@ -43,7 +42,6 @@ function getPresets(chainId: ActiveChain) {
     { label: 'USDG · canonical (4663)', addr: MAINNET_USDG },
     { label: 'AAPL · Stock Token', addr: MAINNET_AAPL },
     { label: 'pons V2 curve', addr: MAINNET_PONS_CURVE },
-    { label: 'pons graduated v4', addr: MAINNET_PONS_GRAD },
     { label: 'WETH · canonical', addr: MAINNET_WETH },
     { label: 'PoolManager (v4)', addr: POOL_MANAGER },
   ];
@@ -76,7 +74,7 @@ function resolveLocalFallback(raw: string, chainId: ActiveChain): Resolution {
   if (a === TESTNET_KOIP_CURVE.toLowerCase() || a === MAINNET_PONS_CURVE.toLowerCase()) {
     return { matched: 2, kind: 'pons_curve', note: 'Active bonding-curve token launched via Pons factory.' };
   }
-  if (a === TESTNET_PONSIDOOG_GRAD.toLowerCase() || a === MAINNET_PONS_GRAD.toLowerCase()) {
+  if (a === TESTNET_PONSIDOOG_GRAD.toLowerCase()) {
     return { matched: 3, kind: 'pons_graduated_v4', note: 'Graduated Pons token trading in a locked Uniswap v4 PoolManager pool.' };
   }
   if (a === weth) return { matched: 4, kind: 'other', note: 'Canonical WETH.' };
