@@ -8,6 +8,14 @@ coverage/
 *.tsbuildinfo
 .DS_Store
 __MACOSX/
+._*
+# This is a pnpm workspace; npm/yarn lockfiles are never committed
+package-lock.json
+yarn.lock
+# Foundry / Rust build output
+packages/zk/contracts/out/
+packages/zk/contracts/cache/
+packages/zk/contracts/lib/
 .env
 .env.local
 .env.*.local
