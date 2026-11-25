@@ -621,16 +621,16 @@ Urutan wajib. Tiap tahap dicatat di dokumen ini.
 | 7 | Skenario: Spoofed Mock USDG | deny `T-MINT` | **jalan (live zguard-delta.vercel.app, 2026-11-25)** | deny `T-MINT, C-FINDING, T-LP` |
 | 8 | Skenario: hidden approve() | deny `Q-006` / `S-APPROVE` | **jalan (live zguard-delta.vercel.app, 2026-11-25)** | deny `Q-006, S-APPROVE` |
 | 9 | Skenario: undecodable bytes | abstain | **jalan (live zguard-delta.vercel.app, 2026-11-25)** | abstain `Q-DECODE, S-FAIL` |
-| 10 | Token override dengan alamat nyata | Hasil token risk sesuai | belum diuji live | — |
+| 10 | Token override dengan alamat nyata | Hasil token risk sesuai | **jalan (live, 2026-11-25)** | TSLA → allow `stock_token`; KOIP → allow `pons_curve`; Mock USDG → deny `T-MINT`, kind `other` |
 | 11 | Sign Valid (Allow) dengan wallet asli | Popup wallet muncul, tanda tangan berhasil | **jalan (live, wallet asli, 2026-11-25)** | Tombol hanya muncul bila wallet terhubung di chain yang sama |
 | 12 | Tamper payTo (Block) | Tidak ada popup, diblokir | **jalan (live, wallet asli, 2026-11-25)**: tidak ada popup, status deny | Logika signer dites: deny → 0 panggilan wallet (`c8-integrations.test.ts`) |
 | 13 | Toggle Testnet/Mainnet (mainnet ditunda: cukup pastikan toggle tidak error) | Chain, skenario, dan tombol Connect ikut berubah | jalan (unit test) | Toggle = store bersama; saat terhubung meminta switch ke 0x1237; dites di `wallet.test.ts` |
 | 14 | Halaman ZK: fixture allow dan deny Q-001 | Status `pending → proven → verified`, link `verifyTx` terbuka di explorer | sebagian: berhenti di `pending` (jujur) | allow → verdict allow / bitmask 0x0, deny → deny / 0x1; status `pending`, note "SP1 prover not configured". `verified` butuh prover + verifier (H2–H5) |
-| 15 | RHC Registry: daftar Stock Token dan cek alamat | Data live, token ticker kembar tidak berlabel `stock_token` | **sebagian jalan (live API)**: `/v1/registry` 5 stock token testnet (AMZN, TSLA, AMD, PLTR, NFLX); halaman UI belum dicek manual | Mock USDG (lookalike) → `other` + deny di skenario 7 |
+| 15 | RHC Registry: daftar Stock Token dan cek alamat | Data live, token ticker kembar tidak berlabel `stock_token` | **jalan (live, 2026-11-25)** | `/v1/registry` 5 stock token testnet; preset UI live; Mock USDG berlabel `other` |
 | 16 | API & Pricing: register, balance, receipts | Register OK, receipts hanya milik tenant, tanpa key = 401 | **jalan (live API)** | register 200 + key `zg_live_…`; `/v1/receipts` tanpa key = 401; pendapatan global hanya muncul dengan `x-admin-key` (`poc-store.test.ts`) |
 | 17 | Billing: panggilan berbayar sampai kredit habis | 402 dengan quote USDG di 46630; bayar nyata menambah kredit; bayar dari wallet kosong ditolak | sebagian | 402 ✅ (eip155:46630, USDG, mode deposit, 3 konfirmasi). Bayar nyata belum (butuh USDG faucet); wallet kosong ditolak ✅ di test offline |
 | 18 | Docs: contoh `curl` dan konfigurasi MCP | Berjalan apa adanya | **jalan setelah diperbaiki (2026-11-25)** | Sebelumnya TIDAK jalan: `pnpm add @zguard/sdk` dan `npx @zguard/mcp` = npm 404, fungsi `guard` tidak diekspor SDK, network mainnet 4663, curl berisi `{…}`. Sekarang: build dari repo, curl/SDK/MCP testnet 46630 dengan base URL = origin halaman; blok curl & SDK dijalankan persis seperti dirender → `allow`; MCP via `node packages/mcp/dist/index.js` → 5 tools, `tools/call` jalan ke API live |
-| 19 | Tampilan mobile (navbar, Console, Docs) | Tidak ada layout rusak | belum diuji di perangkat | — |
+| 19 | Tampilan mobile (navbar, Console, Docs) | Tidak ada layout rusak | **jalan (diuji user, 2026-11-25)** | Navbar, Console, Docs tanpa layout rusak |
 | 20 | Fail-closed: matikan API atau RPC | Hasil bukan allow, signer menolak | jalan (lokal) | API tidak terkonfigurasi → 503 `abstain P-UNAVAIL`; signer menolak non-allow (`c8-integrations`, acceptance §9.4) |
 
 **Log temuan dari uji manual (isi oleh anak dev, pola 5 bagian)**
