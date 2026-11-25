@@ -1,0 +1,101 @@
+name: CI
+
+# Gap C6: install, build, typecheck and offline tests on every push / PR.
+# Live testnet suites (network + funded keys) are opt-in via workflow_dispatch.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      live:
+        description: "Also run live RHC testnet 46630 tests"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  node:
+    name: Build · typecheck · offline tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        # version comes from "packageManager" in package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build packages + apps
+        run: pnpm build
+        env:
+          # Local proxy target so next build does not hit the misconfigured branch
+          ZGUARD_INTERNAL_API_URL: http://127.0.0.1:8787
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Offline tests (api + sdk integrations + zk honesty + web wallet store)
+        run: pnpm test
+
+  solidity:
+    name: Foundry · ZGuardQuoteVerifier
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - name: forge test
+        working-directory: packages/zk/foundry
+        run: forge test -vv
+
+  rust:
+    name: Cargo · quote-rules (shared with SP1 guest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/zk/quote-rules
+      - name: cargo test
+        working-directory: packages/zk/quote-rules
+        run: cargo test
+
+  live:
+    name: Live RHC testnet 46630 (opt-in)
+    if: github.event_name == 'workflow_dispatch' && inputs.live
+    needs: node
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      ZGUARD_ACTIVE_CHAIN_ID: "46630"
+      ZGUARD_TEST_PONS_GRADUATED_TOKEN: ${{ vars.ZGUARD_TEST_PONS_GRADUATED_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test:live
