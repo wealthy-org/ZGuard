@@ -8,10 +8,12 @@
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "build": "tsc -p tsconfig.json",
-    "test": "tsx --test test/acceptance.test.ts test/testnet-46630.test.ts",
+    "test": "tsx --test test/offline.test.ts test/poc-store.test.ts test/poc-x402.test.ts test/deposit.test.ts test/poc-quote-match.test.ts test/zk-honesty.test.ts test/c8-integrations.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "db:generate": "drizzle-kit generate",
-    "db:push": "drizzle-kit push"
+    "db:push": "drizzle-kit push",
+    "test:offline": "tsx --test test/offline.test.ts test/poc-store.test.ts test/poc-x402.test.ts test/deposit.test.ts test/poc-quote-match.test.ts test/zk-honesty.test.ts test/c8-integrations.test.ts",
+    "test:live": "tsx --test test/testnet-46630.test.ts test/acceptance.test.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.14.2",
