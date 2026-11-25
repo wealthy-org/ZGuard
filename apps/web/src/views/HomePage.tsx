@@ -148,7 +148,7 @@ const MARQUEE = [
   'PoolManager · 0x8366…0951',
   'pons V2 factory · 0x7eD5…EC7e',
   'Groth16 · BN254',
-  'Halo2-KZG (target)',
+  'Halo2-KZG (skeleton)',
   'x402 · USDG billing',
   'allow · deny · abstain',
   'Perm · Terminal · MCP',
@@ -537,11 +537,11 @@ function ZkTeaser({ navigate }: { navigate: Navigate }) {
           <LineReveal lines={['Prove the match.', { text: 'Keep the intent private.', muted: true }]} className="font-display text-[clamp(1.875rem,9.5vw,2.25rem)] leading-[0.95] text-white sm:text-5xl lg:text-6xl" />
           <Reveal delay={0.2}>
             <p className="mt-6 max-w-md text-sm leading-relaxed text-zinc-400">
-              Groth16 is the required proof system for MVP, with Halo2-KZG as the target. The proof covers quote-match only,
+              Groth16 via SP1 is the planned proof system (guest scaffold today; attestations stay pending until a prover and verifier are deployed). The proof covers quote-match only,
               never simulation or token risk, and carries commitments instead of your intent.
             </p>
             <div className="mt-6 flex flex-wrap gap-2">
-              {['scope: "quote"', 'Groth16 · BN254', 'Halo2-KZG · target', 'commitment hashes'].map((t) => (
+              {['scope: "quote"', 'Groth16 · BN254', 'Halo2-KZG · skeleton', 'commitment hashes'].map((t) => (
                 <span key={t} className="rounded-full border border-white/15 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-zinc-300">
                   {t}
                 </span>
@@ -660,7 +660,7 @@ const SURFACES: { title: string; icon: LucideIcon; desc: string; lines: { text: 
   {
     title: 'Perm router',
     icon: Router,
-    desc: 'Default-on. Every candidate route calls the guard with an intent built by router code.',
+    desc: 'SDK helper createPermRouterGuard: every candidate route calls the guard with the exact tx. Wiring into the Perm repo is pending.',
     lines: [
       { text: 'perm.route(intent)', kind: 'cmd' },
       { text: '→ POST /v1/guard', kind: 'out' },
@@ -671,7 +671,7 @@ const SURFACES: { title: string; icon: LucideIcon; desc: string; lines: { text: 
   {
     title: 'RHC / pons terminal',
     icon: TerminalSquare,
-    desc: 'Runs before every approve, swap or launch-buy. A deny blocks the signature path.',
+    desc: 'SDK helper createTerminalSwapGuard runs before every approve, swap or launch-buy; a deny blocks the signature path. Terminal integration pending.',
     lines: [
       { text: 'terminal.swap(quote)', kind: 'cmd' },
       { text: 'guard → token_risk: other', kind: 'out' },
@@ -705,7 +705,7 @@ function Distribution() {
           <Reveal>
             <div className="mb-6 font-mono text-[11px] uppercase tracking-[0.28em] text-zinc-500">05 — Distribution</div>
           </Reveal>
-          <LineReveal lines={['Default-on,', { text: 'not optional.', muted: true }]} className="font-display text-[clamp(1.875rem,9.5vw,2.25rem)] leading-[0.95] text-white sm:text-5xl lg:text-6xl" />
+          <LineReveal lines={['Built to be default-on,', { text: 'integrations in progress.', muted: true }]} className="font-display text-[clamp(1.875rem,9.5vw,2.25rem)] leading-[0.95] text-white sm:text-5xl lg:text-6xl" />
         </div>
         <div className="grid gap-5 lg:grid-cols-3">
           {SURFACES.map((s, i) => {

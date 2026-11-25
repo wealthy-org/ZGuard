@@ -82,7 +82,7 @@ const CONFIG: [string, string, string][] = [
   ['EIP-712 domains', 'only those read from installed contracts (USDG verified on 4663)', 'required'],
   ['Stock Token list', 'official Robinhood registry, refreshed live, never ticker-based', 'required'],
   ['Simulation method', 'eth_simulateV1 active on RHC 4663 (+ debug_traceCall fallback)', 'verified'],
-  ['zk system', 'Groth16 BN254 (SP1) + Halo2-KZG · precompiles 0x06/0x07/0x08 active', 'verified'],
+  ['zk system', 'Groth16 BN254 via SP1 (guest scaffold, prover + verifier not deployed; attestations stay pending) · Halo2-KZG skeleton', 'in progress'],
 ];
 
 function X402Flow() {
