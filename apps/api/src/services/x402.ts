@@ -6,9 +6,11 @@ import {
   parseAbi,
   type Chain,
   type Hex,
+  recoverMessageAddress,
   type PublicClient,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { createPublicKey, verify as cryptoVerify } from "node:crypto";
 import {
   BASE_USDC_ASSETS,
   NETWORK_BASE_MAINNET,
@@ -20,6 +22,7 @@ import {
   RHC_MAINNET_CHAIN_ID,
   RHC_TESTNET_CHAIN_ID,
   SOLANA_USDC_MINTS,
+  depositClaimMessage,
   getRhcChainProfile,
   getVerifiedEip712Domain,
   verifyEip3009Signature,
@@ -47,10 +50,14 @@ export interface ParsedXPayment {
     authorization?: Eip3009Authorization;
     txHash?: string;
     txSignature?: string;
+    claimSignature?: string;
+    claimer?: string;
   };
   authorization?: Eip3009Authorization;
   txHash?: string;
   txSignature?: string;
+  claimSignature?: string;
+  claimer?: string;
 }
 
 export function buildX402Quote(
@@ -130,10 +137,29 @@ export function buildX402Quote(
     });
   }
 
+  const modeRes = resolveSettlementMode(config);
+  const mode = modeRes.ok ? modeRes.mode : "unavailable";
+  const instructions =
+    mode === "deposit"
+      ? `Deposit mode: (1) transfer >= ${requiredMicroUsdg.toString()} micro-USDG to ${config.x402PayTo} on ${activeProfile.network}; (2) wait ${config.x402MinConfirmations} confirmation(s); (3) sign depositClaimMessage(txHash, ${config.activeChainId}) with the SAME wallet (personal_sign); (4) retry with X-PAYMENT {"network":"${activeProfile.network}","payload":{"txHash":"0x…","claimSignature":"0x…"}}.`
+      : mode === "onchain"
+        ? `On-chain mode: sign an EIP-3009 TransferWithAuthorization for USDG to ${config.x402PayTo} and send it in X-PAYMENT; the relayer settles it and credit is granted only after a successful receipt.`
+        : mode === "offchain"
+          ? "DEV/TEST offchain mode: EIP-3009 signatures are checked but NOT settled. Never use in production."
+          : `Payments are currently unavailable: ${modeRes.ok ? "" : modeRes.error}`;
+
   return {
     x402Version: 1,
     error: `Insufficient USDG credit. Submit payment on ${activeProfile.network} via X-PAYMENT header.`,
     accepts,
+    settlement: {
+      mode,
+      minConfirmations: config.x402MinConfirmations,
+      instructions,
+      ...(mode === "deposit"
+        ? { claimMessageTemplate: "ZGuard credit claim\ntx:<txHash lowercase>\nchain:<chainId>" }
+        : {}),
+    },
   };
 }
 
@@ -160,53 +186,95 @@ function splitEcdsaSig(sigHex: string): { v: number; r: Hex; s: Hex } | null {
   return { v, r, s };
 }
 
-async function settleEip3009OnchainIfConfigured(params: {
+export type EffectiveSettlementMode = "onchain" | "deposit" | "offchain";
+
+/**
+ * Resolves the settlement mode actually used at runtime (gap X402-1).
+ * `auto` never means "credit without settlement": it is `onchain` with a relayer, otherwise `deposit`.
+ */
+export function resolveSettlementMode(
+  config: ZGuardAppConfig
+): { ok: true; mode: EffectiveSettlementMode } | { ok: false; error: string } {
+  const hasRelayer = Boolean(
+    config.x402RelayerPrivateKey && /^0x[0-9a-fA-F]{64}$/.test(config.x402RelayerPrivateKey)
+  );
+  switch (config.x402SettlementMode) {
+    case "offchain":
+      if (config.isProduction) {
+        return {
+          ok: false,
+          error:
+            "ZGUARD_X402_SETTLEMENT_MODE=offchain is a dev/test mode and is refused when NODE_ENV=production",
+        };
+      }
+      return { ok: true, mode: "offchain" };
+    case "onchain":
+      if (!hasRelayer) {
+        return {
+          ok: false,
+          error: "ZGUARD_X402_SETTLEMENT_MODE=onchain requires a valid ZGUARD_X402_RELAYER_PRIVATE_KEY",
+        };
+      }
+      return { ok: true, mode: "onchain" };
+    case "deposit":
+      return { ok: true, mode: "deposit" };
+    case "auto":
+    default:
+      return { ok: true, mode: hasRelayer ? "onchain" : "deposit" };
+  }
+}
+
+/**
+ * Settles an EIP-3009 authorization on-chain through the relayer. Returns `ok` ONLY when the
+ * `transferWithAuthorization` receipt is `success` with the required confirmations (gap X402-1/X402-2).
+ * Every failure path rejects; the payment nonce is NOT consumed on failure.
+ */
+async function settleEip3009Onchain(params: {
   config: ZGuardAppConfig;
   publicClient: PublicClient;
   chainId: number;
   rpcUrl: string;
   tokenAddress: `0x${string}`;
   auth: Eip3009Authorization;
-}): Promise<{ ok: true; settlementTxHash: string | null } | { ok: false; error: string }> {
+}): Promise<{ ok: true; settlementTxHash: string } | { ok: false; error: string }> {
   const { config, publicClient, chainId, rpcUrl, tokenAddress, auth } = params;
-  if (config.x402SettlementMode === "offchain") {
-    return { ok: true, settlementTxHash: null };
+  const pk = config.x402RelayerPrivateKey;
+  if (!pk || !/^0x[0-9a-fA-F]{64}$/.test(pk)) {
+    return { ok: false, error: "On-chain settlement requires ZGUARD_X402_RELAYER_PRIVATE_KEY" };
+  }
+  if (!auth.nonce || !/^0x[0-9a-fA-F]{64}$/.test(auth.nonce)) {
+    return { ok: false, error: "EIP-3009 authorization is missing a bytes32 nonce" };
+  }
+  const parts = auth.signature ? splitEcdsaSig(auth.signature) : null;
+  if (!parts) {
+    return { ok: false, error: "Cannot settle EIP-3009 authorization without a 65-byte signature" };
   }
 
-  // Always verify on-chain that the nonce has not already been consumed in the ERC-3009 contract
-  if (auth.nonce && /^0x[0-9a-fA-F]{64}$/.test(auth.nonce)) {
-    try {
-      const alreadyUsed = await publicClient.readContract({
+  try {
+    const [alreadyUsed, balance] = await Promise.all([
+      publicClient.readContract({
         address: tokenAddress,
         abi: EIP3009_SETTLE_ABI,
         functionName: "authorizationState",
         args: [auth.from.toLowerCase() as Hex, auth.nonce as Hex],
-      });
-      if (alreadyUsed) {
-        return { ok: false, error: "EIP-3009 nonce already marked used on-chain" };
-      }
-    } catch {
-      // Continue if token does not expose authorizationState
+      }),
+      publicClient.readContract({
+        address: tokenAddress,
+        abi: EIP3009_SETTLE_ABI,
+        functionName: "balanceOf",
+        args: [auth.from.toLowerCase() as Hex],
+      }),
+    ]);
+    if (alreadyUsed) {
+      return { ok: false, error: "EIP-3009 nonce already marked used on-chain" };
     }
-  }
-
-  const pk = config.x402RelayerPrivateKey;
-  if (!pk || !/^0x[0-9a-fA-F]{64}$/.test(pk)) {
-    if (config.x402SettlementMode === "onchain") {
+    if (balance < BigInt(auth.value)) {
       return {
         ok: false,
-        error: "ZGUARD_X402_SETTLEMENT_MODE=onchain requires ZGUARD_X402_RELAYER_PRIVATE_KEY",
+        error: `Payer balance ${balance.toString()} is below the authorized amount ${auth.value}`,
       };
     }
-    return { ok: true, settlementTxHash: null };
-  }
 
-  const parts = auth.signature ? splitEcdsaSig(auth.signature) : null;
-  if (!parts || !auth.nonce) {
-    return { ok: false, error: "Cannot settle 65-byte EIP-3009 signature without r/s/v and nonce" };
-  }
-
-  try {
     const chainObj: Chain = defineChain({
       id: chainId,
       name: `Chain ${chainId}`,
@@ -236,29 +304,95 @@ async function settleEip3009OnchainIfConfigured(params: {
         parts.s,
       ],
     });
-    const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 25_000 });
+    const receipt = await publicClient.waitForTransactionReceipt({
+      hash,
+      confirmations: Math.max(1, config.x402MinConfirmations),
+      timeout: 40_000,
+    });
     if (receipt.status !== "success") {
       return { ok: false, error: "On-chain transferWithAuthorization reverted" };
     }
     return { ok: true, settlementTxHash: hash };
   } catch (err) {
-    if (config.x402SettlementMode === "onchain") {
-      return {
-        ok: false,
-        error: `On-chain EIP-3009 settlement failed: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      };
-    }
-    return { ok: true, settlementTxHash: null };
+    // X402-2: every settlement failure is a rejection, in every mode.
+    return {
+      ok: false,
+      error: `On-chain EIP-3009 settlement failed: ${err instanceof Error ? err.message : String(err)}`,
+    };
   }
 }
+
+// ---------------------------------------------------------------------------------------------
+// Solana optional rail helpers (ed25519 claim binding + finalized commitment)
+// ---------------------------------------------------------------------------------------------
+
+const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
+const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+export function decodeBase58(input: string): Uint8Array | null {
+  const str = input.trim();
+  if (!str) return null;
+  let num = 0n;
+  for (const ch of str) {
+    const idx = BASE58_ALPHABET.indexOf(ch);
+    if (idx < 0) return null;
+    num = num * 58n + BigInt(idx);
+  }
+  const bytes: number[] = [];
+  while (num > 0n) {
+    bytes.unshift(Number(num & 0xffn));
+    num >>= 8n;
+  }
+  for (const ch of str) {
+    if (ch !== "1") break;
+    bytes.unshift(0);
+  }
+  return Uint8Array.from(bytes);
+}
+
+function decodeSignatureBytes(sig: string): Uint8Array | null {
+  const t = sig.trim();
+  if (/^0x[0-9a-fA-F]+$/.test(t)) return Uint8Array.from(Buffer.from(t.slice(2), "hex"));
+  const b58 = decodeBase58(t);
+  if (b58 && b58.length === 64) return b58;
+  try {
+    const b64 = Buffer.from(t, "base64");
+    if (b64.length === 64) return Uint8Array.from(b64);
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+/** Verifies an ed25519 signature from a base58 Solana public key over a UTF-8 message. */
+export function verifySolanaClaimSignature(
+  claimerBase58: string,
+  message: string,
+  signature: string
+): boolean {
+  const pub = decodeBase58(claimerBase58);
+  const sig = decodeSignatureBytes(signature);
+  if (!pub || pub.length !== 32 || !sig || sig.length !== 64) return false;
+  try {
+    const key = createPublicKey({
+      key: Buffer.concat([ED25519_SPKI_PREFIX, Buffer.from(pub)]),
+      format: "der",
+      type: "spki",
+    });
+    return cryptoVerify(null, Buffer.from(message, "utf8"), key, Buffer.from(sig));
+  } catch {
+    return false;
+  }
+}
+
 
 async function verifySolanaUsdcPayment(params: {
   config: ZGuardAppConfig;
   store: StorageStore;
   network: string;
   txSignature: string;
+  claimer: string | undefined;
+  claimSignature: string | undefined;
   minimumMicroUsdg: bigint;
   tenantId: string | null;
 }): Promise<
@@ -277,6 +411,19 @@ async function verifySolanaUsdcPayment(params: {
   const expectedMint = isDevnet ? SOLANA_USDC_MINTS.DEVNET : SOLANA_USDC_MINTS.MAINNET;
   const expectedOwner = params.config.x402SolanaPayTo || params.config.x402PayTo;
 
+  // X402-4 (Solana): the claim must be signed by the wallet that actually sent the USDC.
+  if (!params.claimer || !params.claimSignature) {
+    return {
+      ok: false,
+      error:
+        "Solana X-PAYMENT requires payload.claimer (payer public key) and payload.claimSignature over depositClaimMessage(txSignature, network)",
+    };
+  }
+  const message = depositClaimMessage(params.txSignature, params.network);
+  if (!verifySolanaClaimSignature(params.claimer, message, params.claimSignature)) {
+    return { ok: false, error: "Invalid Solana claimSignature (must be signed by the paying wallet)" };
+  }
+
   try {
     const resp = await fetch(rpcUrl, {
       method: "POST",
@@ -287,7 +434,7 @@ async function verifySolanaUsdcPayment(params: {
         method: "getTransaction",
         params: [
           params.txSignature,
-          { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 },
+          { encoding: "jsonParsed", maxSupportedTransactionVersion: 0, commitment: "finalized" },
         ],
       }),
       signal: AbortSignal.timeout(10_000),
@@ -296,47 +443,48 @@ async function verifySolanaUsdcPayment(params: {
       result?: {
         meta?: {
           err: unknown;
-          preTokenBalances?: Array<{
-            accountIndex: number;
-            mint: string;
-            owner?: string;
-            uiTokenAmount: { amount: string };
-          }>;
-          postTokenBalances?: Array<{
-            accountIndex: number;
-            mint: string;
-            owner?: string;
-            uiTokenAmount: { amount: string };
-          }>;
+          preTokenBalances?: SolTokenBalance[];
+          postTokenBalances?: SolTokenBalance[];
         };
       } | null;
     };
 
     const meta = json.result?.meta;
     if (!meta || meta.err !== null) {
-      return { ok: false, error: "Solana X-PAYMENT transaction not confirmed or failed" };
+      return { ok: false, error: "Solana X-PAYMENT transaction not finalized or failed" };
     }
 
-    const preMap = new Map<number, bigint>();
-    for (const b of meta.preTokenBalances ?? []) {
-      if (b.mint === expectedMint && b.owner === expectedOwner) {
-        preMap.set(b.accountIndex, BigInt(b.uiTokenAmount.amount));
+    const sumFor = (list: SolTokenBalance[] | undefined, owner: string) => {
+      const m = new Map<number, bigint>();
+      for (const b of list ?? []) {
+        if (b.mint === expectedMint && b.owner === owner) {
+          m.set(b.accountIndex, BigInt(b.uiTokenAmount.amount));
+        }
       }
-    }
+      return m;
+    };
 
+    const preTreasury = sumFor(meta.preTokenBalances, expectedOwner);
+    const postTreasury = sumFor(meta.postTokenBalances, expectedOwner);
     let netReceived = 0n;
-    for (const b of meta.postTokenBalances ?? []) {
-      if (b.mint === expectedMint && b.owner === expectedOwner) {
-        const after = BigInt(b.uiTokenAmount.amount);
-        const before = preMap.get(b.accountIndex) ?? 0n;
-        if (after > before) netReceived += after - before;
-      }
+    for (const [idx, after] of postTreasury) {
+      const before = preTreasury.get(idx) ?? 0n;
+      if (after > before) netReceived += after - before;
     }
 
-    if (netReceived < params.minimumMicroUsdg) {
+    const preClaimer = sumFor(meta.preTokenBalances, params.claimer);
+    const postClaimer = sumFor(meta.postTokenBalances, params.claimer);
+    let netSent = 0n;
+    for (const [idx, before] of preClaimer) {
+      const after = postClaimer.get(idx) ?? 0n;
+      if (before > after) netSent += before - after;
+    }
+
+    const credited = netReceived < netSent ? netReceived : netSent;
+    if (credited < params.minimumMicroUsdg) {
       return {
         ok: false,
-        error: `Solana USDC transfer received ${netReceived.toString()} < required ${params.minimumMicroUsdg.toString()}`,
+        error: `Solana USDC sent by ${params.claimer} to treasury was ${credited.toString()} < required ${params.minimumMicroUsdg.toString()}`,
       };
     }
 
@@ -345,8 +493,8 @@ async function verifySolanaUsdcPayment(params: {
       tenantId: params.tenantId,
       network: params.network,
       asset: expectedMint,
-      payer: "solana-payer",
-      amountMicro: netReceived,
+      payer: params.claimer,
+      amountMicro: credited,
     });
     if (!fresh) {
       return { ok: false, error: "Solana X-PAYMENT signature already redeemed (replay blocked)" };
@@ -354,8 +502,8 @@ async function verifySolanaUsdcPayment(params: {
 
     return {
       ok: true,
-      creditedMicroUsdg: netReceived,
-      payer: "solana-payer",
+      creditedMicroUsdg: credited,
+      payer: params.claimer,
       assetSymbol: "USDC",
       rail: params.network,
       settlementTxHash: params.txSignature,
@@ -368,11 +516,20 @@ async function verifySolanaUsdcPayment(params: {
   }
 }
 
+interface SolTokenBalance {
+  accountIndex: number;
+  mint: string;
+  owner?: string;
+  uiTokenAmount: { amount: string };
+}
+
 /**
  * Verifies an incoming `X-PAYMENT` header across:
  *   1. Robinhood Chain Testnet (`eip155:46630`) & Mainnet (`eip155:4663`) — USDG (primary mandatory rail)
  *   2. Base Mainnet (`eip155:8453`) & Base Sepolia (`eip155:84532`) — USDC (when `enableUsdcBase` is true)
  *   3. Solana Mainnet & Devnet (`solana:...`) — USDC (when `enableUsdcSolana` is true)
+ *
+ * Credit is only ever returned for money that verifiably arrived at the treasury (gap X402-1/2/4).
  */
 export async function verifyAndConsumeXPayment(params: {
   config: ZGuardAppConfig;
@@ -398,6 +555,12 @@ export async function verifyAndConsumeXPayment(params: {
     return { ok: false, error: "Malformed X-PAYMENT header (expected JSON or base64 JSON)" };
   }
 
+  const modeRes = resolveSettlementMode(params.config);
+  if (!modeRes.ok) {
+    return { ok: false, error: modeRes.error };
+  }
+  const mode = modeRes.mode;
+
   const activeProfile = getRhcChainProfile(params.config.activeChainId);
   const network = parsed.network ?? activeProfile.network;
 
@@ -415,6 +578,8 @@ export async function verifyAndConsumeXPayment(params: {
       store: params.store,
       network,
       txSignature: sig,
+      claimer: parsed.payload?.claimer ?? parsed.claimer,
+      claimSignature: parsed.payload?.claimSignature ?? parsed.claimSignature,
       minimumMicroUsdg: params.minimumMicroUsdg,
       tenantId: params.tenantId,
     });
@@ -465,9 +630,20 @@ export async function verifyAndConsumeXPayment(params: {
 
   const auth = parsed.payload?.authorization ?? parsed.authorization;
   const txHash = parsed.payload?.txHash ?? parsed.txHash;
+  const claimSignature = parsed.payload?.claimSignature ?? parsed.claimSignature;
 
-  // Path 1: Signed EIP-3009 Authorization (USDG on RHC 46630/4663 or USDC on Base 8453/84532)
+  // Path 1: Signed EIP-3009 Authorization (settled by relayer, or offchain in dev/test only)
   if (auth) {
+    if (mode === "deposit") {
+      return {
+        ok: false,
+        error:
+          "This API runs in deposit settlement mode: transfer USDG to payTo yourself, then send X-PAYMENT {network, payload:{txHash, claimSignature}} signed over depositClaimMessage(txHash, chainId)",
+      };
+    }
+    if (!auth.to || !auth.from || auth.value === undefined) {
+      return { ok: false, error: "Malformed EIP-3009 authorization (from/to/value required)" };
+    }
     if (auth.to.toLowerCase() !== params.config.x402PayTo.toLowerCase()) {
       return {
         ok: false,
@@ -475,7 +651,12 @@ export async function verifyAndConsumeXPayment(params: {
       };
     }
 
-    const amount = BigInt(auth.value ?? "0");
+    let amount: bigint;
+    try {
+      amount = BigInt(auth.value);
+    } catch {
+      return { ok: false, error: "X-PAYMENT amount is not an integer" };
+    }
     if (amount < params.minimumMicroUsdg) {
       return {
         ok: false,
@@ -504,17 +685,22 @@ export async function verifyAndConsumeXPayment(params: {
       };
     }
 
-    const settlement = await settleEip3009OnchainIfConfigured({
-      config: params.config,
-      publicClient: evmClient,
-      chainId: targetChainId,
-      rpcUrl,
-      tokenAddress,
-      auth,
-    });
-    if (!settlement.ok) {
-      return { ok: false, error: settlement.error };
+    let settlementTxHash: string | null = null;
+    if (mode === "onchain") {
+      const settlement = await settleEip3009Onchain({
+        config: params.config,
+        publicClient: evmClient,
+        chainId: targetChainId,
+        rpcUrl,
+        tokenAddress,
+        auth,
+      });
+      if (!settlement.ok) {
+        return { ok: false, error: settlement.error };
+      }
+      settlementTxHash = settlement.settlementTxHash;
     }
+    // mode === "offchain": dev/test only (refused in production by resolveSettlementMode)
 
     const nonceKey = `eip3009:${targetChainId}:${auth.from.toLowerCase()}:${(
       auth.nonce ?? ""
@@ -538,22 +724,52 @@ export async function verifyAndConsumeXPayment(params: {
       payer: auth.from,
       assetSymbol,
       rail: network,
-      settlementTxHash: settlement.settlementTxHash,
+      settlementTxHash,
     };
   }
 
-  // Path 2: On-chain confirmed ERC-20 Transfer transaction hash on RHC or Base
+  // Path 2: Deposit claim — confirmed ERC-20 Transfer txHash + claimSignature from the payer (X402-4)
   if (txHash && /^0x[0-9a-fA-F]{64}$/.test(txHash)) {
+    if (!claimSignature || !/^0x[0-9a-fA-F]{130}$/.test(claimSignature)) {
+      return {
+        ok: false,
+        error:
+          "X-PAYMENT txHash claims require payload.claimSignature: an EIP-191 signature by the paying wallet over depositClaimMessage(txHash, chainId)",
+      };
+    }
+
+    let claimer: string;
+    try {
+      claimer = (
+        await recoverMessageAddress({
+          message: depositClaimMessage(txHash, targetChainId),
+          signature: claimSignature as Hex,
+        })
+      ).toLowerCase();
+    } catch {
+      return { ok: false, error: "Invalid claimSignature (could not recover signer)" };
+    }
+
     try {
       const receipt = await evmClient.getTransactionReceipt({ hash: txHash as Hex });
       if (receipt.status !== "success") {
         return { ok: false, error: `X-PAYMENT transaction reverted on ${network}` };
       }
 
+      if (params.config.x402MinConfirmations > 0) {
+        const head = await evmClient.getBlockNumber();
+        const confirmations = head - receipt.blockNumber + 1n;
+        if (confirmations < BigInt(params.config.x402MinConfirmations)) {
+          return {
+            ok: false,
+            error: `X-PAYMENT transaction has ${confirmations.toString()} confirmation(s); ${params.config.x402MinConfirmations} required. Retry shortly.`,
+          };
+        }
+      }
+
       const tokenLower = tokenAddress.toLowerCase();
       const expectedTo = params.config.x402PayTo.toLowerCase();
       let matchedAmount = 0n;
-      let payer = receipt.from.toLowerCase();
 
       for (const lg of receipt.logs) {
         if (
@@ -563,17 +779,23 @@ export async function verifyAndConsumeXPayment(params: {
         ) {
           const fromAddr = `0x${lg.topics[1]!.slice(-40).toLowerCase()}`;
           const toAddr = `0x${lg.topics[2]!.slice(-40).toLowerCase()}`;
-          if (toAddr === expectedTo) {
+          // X402-4: only transfers FROM the claim signer TO the treasury count.
+          if (toAddr === expectedTo && fromAddr === claimer) {
             matchedAmount += BigInt(lg.data);
-            payer = fromAddr;
           }
         }
       }
 
+      if (matchedAmount === 0n) {
+        return {
+          ok: false,
+          error: `No ${assetSymbol} transfer from claim signer ${claimer} to ${expectedTo} in ${txHash}`,
+        };
+      }
       if (matchedAmount < params.minimumMicroUsdg) {
         return {
           ok: false,
-          error: `Confirmed ${assetSymbol} transfer to ${expectedTo} was ${matchedAmount.toString()} < ${params.minimumMicroUsdg.toString()}`,
+          error: `Confirmed ${assetSymbol} transfer from ${claimer} to ${expectedTo} was ${matchedAmount.toString()} < ${params.minimumMicroUsdg.toString()}`,
         };
       }
 
@@ -582,7 +804,7 @@ export async function verifyAndConsumeXPayment(params: {
         tenantId: params.tenantId,
         network,
         asset: tokenAddress,
-        payer,
+        payer: claimer,
         amountMicro: matchedAmount,
       });
 
@@ -593,7 +815,7 @@ export async function verifyAndConsumeXPayment(params: {
       return {
         ok: true,
         creditedMicroUsdg: matchedAmount,
-        payer,
+        payer: claimer,
         assetSymbol,
         rail: network,
         settlementTxHash: txHash,
@@ -610,6 +832,43 @@ export async function verifyAndConsumeXPayment(params: {
 
   return {
     ok: false,
-    error: "X-PAYMENT must include payload.authorization (EIP-3009) or payload.txHash / txSignature",
+    error:
+      mode === "deposit"
+        ? "X-PAYMENT must include payload.txHash + payload.claimSignature (deposit mode)"
+        : "X-PAYMENT must include payload.authorization (EIP-3009) or payload.txHash + payload.claimSignature",
   };
+}
+
+/**
+ * Returns the payer an X-PAYMENT header CLAIMS to come from, without any network call.
+ * Used only for pre-verification rate limiting (gap C5, per-payer budget); never for crediting.
+ */
+export async function peekXPaymentPayer(
+  rawHeader: string,
+  activeChainId: number
+): Promise<string | null> {
+  const parsed = decodeXPaymentHeader(rawHeader);
+  if (!parsed) return null;
+  const auth = parsed.payload?.authorization ?? parsed.authorization;
+  if (auth?.from && /^0x[0-9a-fA-F]{40}$/.test(auth.from)) return auth.from.toLowerCase();
+  const claimer = parsed.payload?.claimer ?? parsed.claimer;
+  if (claimer) return claimer;
+  const txHash = parsed.payload?.txHash ?? parsed.txHash;
+  const claimSignature = parsed.payload?.claimSignature ?? parsed.claimSignature;
+  if (txHash && claimSignature && /^0x[0-9a-fA-F]{130}$/.test(claimSignature)) {
+    const network = parsed.network ?? "";
+    const m = network.match(/^eip155:(\d+)$/);
+    const chainId = m ? Number(m[1]) : activeChainId;
+    try {
+      return (
+        await recoverMessageAddress({
+          message: depositClaimMessage(txHash, chainId),
+          signature: claimSignature as Hex,
+        })
+      ).toLowerCase();
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }

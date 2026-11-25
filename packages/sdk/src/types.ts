@@ -107,7 +107,10 @@ export interface SolanaSplTransfer {
   amount: string;
   instruction?: string;
   instructions?: string[];
+  /** Ignored for the decision: the flag is recomputed from `transaction` (caller booleans are untrusted). */
   hasApproveOrSetAuthority?: boolean;
+  /** Base64 serialized Solana transaction (legacy or v0). Required for an `allow`. */
+  transaction?: string;
 }
 
 export interface GuardPayload {
@@ -312,6 +315,8 @@ export interface ZkAttestation {
   bn254PrecompileVerified?: boolean;
   verifierGasUsed?: string | null;
   status: "pending" | "proven" | "verified" | "failed";
+  /** Human-readable reason for the current status (e.g. prover not configured). */
+  note?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -367,8 +372,20 @@ export interface X402PaymentRequirement {
   };
 }
 
+export interface X402SettlementInfo {
+  /** Effective settlement mode on the server ("onchain" | "deposit" | "offchain" dev-only | "unavailable"). */
+  mode: "onchain" | "deposit" | "offchain" | "unavailable";
+  /** Blocks a payment tx must have before it is credited. */
+  minConfirmations: number;
+  /** Human-readable instructions for paying this quote. */
+  instructions: string;
+  /** Deposit mode: template of the EIP-191 message to sign (see `depositClaimMessage`). */
+  claimMessageTemplate?: string;
+}
+
 export interface X402QuoteResponse {
   x402Version: 1;
   error: string;
   accepts: X402PaymentRequirement[];
+  settlement?: X402SettlementInfo;
 }

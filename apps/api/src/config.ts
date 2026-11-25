@@ -70,6 +70,21 @@ export interface ZGuardAppConfig {
 
   databaseUrl: string;
   storageMode: "auto" | "neon";
+  /** True when NODE_ENV=production (Vercel). Enables strict production guards. */
+  isProduction: boolean;
+  /** Explicit escape hatch to run the local JSON store in production (NOT recommended). */
+  allowLocalStoreInProduction: boolean;
+
+  /** Admin key for global revenue/ledger views (`x-admin-key` header). Null = admin views disabled. */
+  adminApiKey: string | null;
+  /** Browser origins allowed to call keyed endpoints cross-origin. Empty = same-origin/server-side only. */
+  corsOrigins: string[];
+  /** Global per-IP request budget per minute (0 disables). */
+  rateLimitPerMinute: number;
+  /** `/v1/register` budget per IP per hour (0 disables). */
+  registerLimitPerIpPerHour: number;
+  /** `/v1/register` (with X-PAYMENT) budget per payer address per hour (0 disables). */
+  registerLimitPerPayerPerHour: number;
 
   rhcRpcUrl: string;
   rhcFallbackRpcUrl: string;
@@ -95,7 +110,17 @@ export interface ZGuardAppConfig {
   x402PayTo: string;
   x402SolanaPayTo: string | null;
   x402RelayerPrivateKey: string | null;
-  x402SettlementMode: "auto" | "onchain" | "offchain";
+  /**
+   * How an X-PAYMENT turns into credit (gap X402-1/X402-2/X402-4):
+   * - `onchain`  : EIP-3009 authorizations are settled by the relayer; credit ONLY after a successful receipt.
+   * - `deposit`  : no relayer. Client transfers USDG to `x402PayTo` itself, then claims with `txHash` +
+   *                `claimSignature` from the SAME wallet. EIP-3009 authorizations are rejected.
+   * - `auto`     : `onchain` when a relayer key is configured, otherwise `deposit`. Never "credit without money".
+   * - `offchain` : DEV/TEST ONLY (signature check without settlement). Refused when NODE_ENV=production.
+   */
+  x402SettlementMode: "auto" | "onchain" | "offchain" | "deposit";
+  /** Blocks a payment tx must be buried under before it can be credited (reorg safety). */
+  x402MinConfirmations: number;
   pricesMicroUsdg: {
     verify: bigint;
     simulate: bigint;
@@ -131,6 +156,8 @@ export interface ZGuardAppConfig {
   zkHalo2Enabled: boolean;
   zkSp1ProverUrl: string | null;
   zkVerifierAddress: string | null;
+  /** Real SP1 program vkey from `cargo prove vkey`; until set, attestations carry a placeholder vkey. */
+  zkProgramVKey: string | null;
   zkVerifierPrivateKey: string | null;
   zkBatchSize: number;
 }
@@ -177,6 +204,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ZGuardAppConfi
     content: requiredList.includes("content") ? "required" : "advisory",
   };
 
+  const isProduction = env.NODE_ENV === "production";
+  const rawMode = env.ZGUARD_X402_SETTLEMENT_MODE;
+  const x402SettlementMode: ZGuardAppConfig["x402SettlementMode"] =
+    rawMode === "onchain" || rawMode === "offchain" || rawMode === "deposit" ? rawMode : "auto";
+
   return {
     productName: env.ZGUARD_PRODUCT_NAME || "ZGuard",
     port: Number(env.ZGUARD_API_PORT || env.PORT || 8787),
@@ -188,6 +220,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ZGuardAppConfi
 
     databaseUrl: env.DATABASE_URL || "",
     storageMode: env.ZGUARD_STORAGE_MODE === "neon" ? "neon" : "auto",
+    isProduction,
+    allowLocalStoreInProduction: env.ZGUARD_ALLOW_LOCAL_STORE_IN_PRODUCTION === "true",
+
+    adminApiKey:
+      env.ZGUARD_ADMIN_API_KEY && env.ZGUARD_ADMIN_API_KEY.trim().length >= 16
+        ? env.ZGUARD_ADMIN_API_KEY.trim()
+        : null,
+    corsOrigins: (env.ZGUARD_CORS_ORIGINS ?? "")
+      .split(",")
+      .map((o) => o.trim().replace(/\/+$/, ""))
+      .filter(Boolean),
+    rateLimitPerMinute: Number(env.ZGUARD_RATE_LIMIT_PER_MINUTE ?? 120),
+    registerLimitPerIpPerHour: Number(env.ZGUARD_REGISTER_LIMIT_PER_IP_PER_HOUR ?? 5),
+    registerLimitPerPayerPerHour: Number(env.ZGUARD_REGISTER_LIMIT_PER_PAYER_PER_HOUR ?? 10),
 
     rhcRpcUrl: env.ZGUARD_RHC_RPC_URL || defaultActiveRpc,
     rhcFallbackRpcUrl: env.ZGUARD_RHC_FALLBACK_RPC_URL || defaultActiveFallback,
@@ -223,11 +269,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ZGuardAppConfi
       "0x0000000000000000000000000000000000004663",
     x402SolanaPayTo: env.ZGUARD_X402_SOLANA_PAY_TO || null,
     x402RelayerPrivateKey: env.ZGUARD_X402_RELAYER_PRIVATE_KEY || null,
-    x402SettlementMode:
-      env.ZGUARD_X402_SETTLEMENT_MODE === "onchain" ||
-      env.ZGUARD_X402_SETTLEMENT_MODE === "offchain"
-        ? env.ZGUARD_X402_SETTLEMENT_MODE
-        : "auto",
+    x402SettlementMode,
+    x402MinConfirmations: Math.max(0, Number(env.ZGUARD_X402_MIN_CONFIRMATIONS ?? 3)),
     pricesMicroUsdg: {
       verify: BigInt(env.ZGUARD_PRICE_VERIFY_MICRO_USDG ?? "3000"),
       simulate: BigInt(env.ZGUARD_PRICE_SIMULATE_MICRO_USDG ?? "5000"),
@@ -235,10 +278,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ZGuardAppConfi
       check: BigInt(env.ZGUARD_PRICE_CHECK_MICRO_USDG ?? "5000"),
       guard: BigInt(env.ZGUARD_PRICE_GUARD_MICRO_USDG ?? "15000"),
     },
-    devFreeCreditMicroUsdg: BigInt(
-      env.ZGUARD_DEV_FREE_CREDIT_MICRO_USDG ??
-        (env.NODE_ENV === "production" ? "0" : "90000")
-    ),
+    // C5: free credit is a testnet/dev convenience only ("hanya testnet").
+    // - Mainnet 4663 in production: always 0.
+    // - Testnet 46630 in production: only what the operator sets explicitly (default 0), rate-limited per IP.
+    // - Local dev: defaults to 90000 micro-USDG.
+    devFreeCreditMicroUsdg:
+      isProduction && activeChainId === RHC_MAINNET_CHAIN_ID
+        ? 0n
+        : BigInt(env.ZGUARD_DEV_FREE_CREDIT_MICRO_USDG ?? (isProduction ? "0" : "90000")),
     enableUsdcBase: env.ZGUARD_ENABLE_USDC_BASE === "true",
     enableUsdcSolana: env.ZGUARD_ENABLE_USDC_SOLANA === "true",
 
@@ -266,9 +313,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ZGuardAppConfi
       env.ZGUARD_ZK_SYSTEM === "groth16-risc0" || env.ZGUARD_ZK_SYSTEM === "halo2-kzg"
         ? env.ZGUARD_ZK_SYSTEM
         : "groth16-sp1",
-    zkHalo2Enabled: env.ZGUARD_ZK_HALO2_ENABLED !== "false",
+    // Halo2 is a skeleton (no prover/verifier): opt-in only, and still yields `pending` (gap C2/C9).
+    zkHalo2Enabled: env.ZGUARD_ZK_HALO2_ENABLED === "true",
     zkSp1ProverUrl: env.ZGUARD_ZK_SP1_PROVER_URL || null,
     zkVerifierAddress: env.ZGUARD_ZK_VERIFIER_ADDRESS || null,
+    zkProgramVKey: env.ZGUARD_ZK_SP1_PROGRAM_VKEY || null,
     zkVerifierPrivateKey:
       env.ZGUARD_ZK_VERIFIER_PRIVATE_KEY || env.ZGUARD_DEPLOYER_PRIVATE_KEY || null,
     zkBatchSize: Number(env.ZGUARD_ZK_BATCH_SIZE ?? 10),
