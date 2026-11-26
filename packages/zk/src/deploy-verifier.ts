@@ -98,7 +98,7 @@ async function main() {
   const vkey = getProgramVKey("groth16-sp1", vkeyEnv || null);
   if (!/^0x[0-9a-fA-F]{40}$/.test(gateway) || /^0x0{40}$/.test(gateway) || isPlaceholderProgramVKey("groth16-sp1", vkey)) {
     console.warn(
-      "[ZGuard ZK Deploy] WARNING: ZGUARD_ZK_SP1_GATEWAY and/or ZGUARD_ZK_SP1_PROGRAM_VKEY not set.\n" +
+      "[ZGuard ZK Deploy] WARNING: ZGUARD_ZK_SP1_GATEWAY not set (or a placeholder vkey override).\n" +
         "  The verifier will deploy but every proof will revert (NotConfigured / invalid) until the owner\n" +
         "  calls proposeGatewayAndVKey(...) and, after the 2-day timelock, applyGatewayAndVKey()."
     );

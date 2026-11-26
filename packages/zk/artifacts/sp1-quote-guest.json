@@ -1,0 +1,7 @@
+{
+  "sp1Version": "v6.10.0",
+  "programVKey": "0x001708b1c5d41d1c9d92527acc9db4d1130aad045d7f34e44f740b19470f973c",
+  "elfSha256": "6c337940e245b96748d8f678427965870add1e0b24844d6d11f756f2b56b6957",
+  "commit": "922e10c8b65e47b7500b5cf857c0e20d892ab8d0",
+  "ciRun": "https://github.com/wealthy-org/ZGuard/actions/runs/45785975447"
+}

@@ -59,16 +59,26 @@ export function encodeRuleBitmask(codes: ReasonCode[]): { numeric: number; hex: 
 }
 
 /**
- * PLACEHOLDER until `cargo prove build` + `vkey` produce the real SP1 program verification key.
- * Set ZGUARD_ZK_SP1_PROGRAM_VKEY (passed via `programVKeyOverride`) once the guest is built.
+ * Real SP1 program verification key of `packages/zk/sp1-quote-guest` (gap H2), built by
+ * `.github/workflows/sp1.yml` with SP1 v6.10.0 and pinned in `packages/zk/artifacts/sp1-quote-guest.json`
+ * (CI fails on drift). Changing the guest, its lockfile or the SP1 version changes this value on purpose.
  */
+export const SP1_QUOTE_PROGRAM_VKEY =
+  "0x001708b1c5d41d1c9d92527acc9db4d1130aad045d7f34e44f740b19470f973c" as const;
+export const SP1_QUOTE_GUEST_BUILD = {
+  sp1Version: "v6.10.0",
+  elfSha256: "6c337940e245b96748d8f678427965870add1e0b24844d6d11f756f2b56b6957",
+} as const;
+
+/** Systems without a built program (halo2-kzg, groth16-risc0) keep a labelled placeholder. */
 export const PLACEHOLDER_PROGRAM_VKEY_NOTE =
-  "placeholder vkey = keccak256('zguard:quote-verifier:v1:<system>'); not a real SP1 program vkey";
+  "placeholder vkey = keccak256('zguard:quote-verifier:v1:<system>'); not a real program vkey";
 
 export function getProgramVKey(system: ZkSystemId, programVKeyOverride?: string | null): `0x${string}` {
   if (programVKeyOverride && /^0x[0-9a-fA-F]{64}$/.test(programVKeyOverride)) {
     return programVKeyOverride.toLowerCase() as `0x${string}`;
   }
+  if (system === "groth16-sp1") return SP1_QUOTE_PROGRAM_VKEY;
   return keccak256(toHex(`zguard:quote-verifier:v1:${system}`));
 }
 
