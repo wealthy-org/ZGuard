@@ -184,8 +184,11 @@ export interface SurfacedApproval {
   owner: string;
   spender: string;
   token: string;
+  /** Raw amount, "ALL" for operator approvals, or "tokenId:<id>" for an ERC-721 single-token approval. */
   amount: string;
   unlimited: boolean;
+  /** Set when the allowance lives in an intermediary contract, e.g. "permit2:<address>". */
+  via?: string;
 }
 
 export interface NamedCall {

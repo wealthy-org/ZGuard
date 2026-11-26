@@ -1,8 +1,11 @@
 import {
   encodeFunctionData,
+  keccak256,
   parseAbi,
   parseAbiItem,
   parseTransaction,
+  recoverTransactionAddress,
+  toHex,
   type Abi,
   type Hex,
   type PublicClient,
@@ -37,6 +40,12 @@ const APPROVAL_TOPIC =
   "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925";
 const APPROVAL_FOR_ALL_TOPIC =
   "0x17307eab39ab6107e8899845ad3d59bd9653f200f220920489ca2b5937696c31";
+
+// SIM-2: Permit2 allowance events (the Permit2 contract emits them, not the token).
+const PERMIT2_APPROVAL_TOPIC = keccak256(toHex("Approval(address,address,address,uint160,uint48)"));
+const PERMIT2_PERMIT_TOPIC = keccak256(toHex("Permit(address,address,address,uint160,uint48,uint48)"));
+const ZERO_ADDR = "0x0000000000000000000000000000000000000000";
+const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
 
 const MAX_UINT128 = (1n << 128n) - 1n;
 
@@ -77,13 +86,35 @@ function sanitizeSimArg(val: unknown): unknown {
   return val;
 }
 
-function buildCallFromRequest(req: GuardRequest):
+type BuiltCall =
   | {
       ok: true;
       call: { from: Hex; to: Hex; data: Hex; value: Hex };
       syntheticEip3009?: boolean;
     }
-  | { ok: false; reason: string } {
+  | { ok: false; reason: string };
+
+/**
+ * SIM-1: the simulation must run as the account that will actually sign. A placeholder sender (the old
+ * 0x…01 default) can hide sender-dependent behaviour (e.g. a contract that only drains `msg.sender == victim`),
+ * so a missing or contradictory sender is an abstain, never a simulation.
+ */
+function resolveSender(candidates: Array<string | undefined | null>): { ok: true; from: Hex } | { ok: false; reason: string } {
+  const given = candidates.filter((c): c is string => typeof c === "string" && c.length > 0);
+  if (given.length === 0) {
+    return { ok: false, reason: "No sender to simulate as: supply tx.from / intent.from or a signed raw tx (simulating from a placeholder address proves nothing)" };
+  }
+  for (const g of given) {
+    if (!ADDR_RE.test(g) || g.toLowerCase() === ZERO_ADDR) return { ok: false, reason: `Invalid sender address ${g}` };
+  }
+  const first = given[0]!.toLowerCase();
+  if (given.some((g) => g.toLowerCase() !== first)) {
+    return { ok: false, reason: `Contradictory senders (${Array.from(new Set(given.map((g) => g.toLowerCase()))).join(" vs ")})` };
+  }
+  return { ok: true, from: first as Hex };
+}
+
+async function buildCallFromRequest(req: GuardRequest, chainId: number): Promise<BuiltCall> {
   const payload = req.payload;
   if (!payload) {
     return { ok: false, reason: "No payload supplied to simulate" };
@@ -126,21 +157,35 @@ function buildCallFromRequest(req: GuardRequest):
   // 2. Raw or structured EVM tx
   if (payload.tx) {
     if (typeof payload.tx === "string") {
+      let parsed: ReturnType<typeof parseTransaction>;
       try {
-        const parsed = parseTransaction(payload.tx as Hex);
-        if (!parsed.to) return { ok: false, reason: "Contract creation tx not supported" };
-        return {
-          ok: true,
-          call: {
-            from: "0x0000000000000000000000000000000000000001",
-            to: parsed.to.toLowerCase() as Hex,
-            data: (parsed.data ?? "0x") as Hex,
-            value: `0x${(parsed.value ?? 0n).toString(16)}` as Hex,
-          },
-        };
+        parsed = parseTransaction(payload.tx as Hex);
       } catch {
         return { ok: false, reason: "Failed to parse raw EVM transaction bytes" };
       }
+      if (!parsed.to) return { ok: false, reason: "Contract creation tx not supported" };
+      if (parsed.chainId !== undefined && parsed.chainId !== chainId) {
+        return { ok: false, reason: `Raw tx chainId ${parsed.chainId} does not match ${req.network}` };
+      }
+      let signer: string | undefined;
+      if (parsed.r && parsed.s) {
+        try {
+          signer = await recoverTransactionAddress({ serializedTransaction: payload.tx as never });
+        } catch {
+          return { ok: false, reason: "Raw tx signature could not be recovered" };
+        }
+      }
+      const sender = resolveSender([signer, payload.intent?.from]);
+      if (!sender.ok) return sender;
+      return {
+        ok: true,
+        call: {
+          from: sender.from,
+          to: parsed.to.toLowerCase() as Hex,
+          data: (parsed.data ?? "0x") as Hex,
+          value: `0x${(parsed.value ?? 0n).toString(16)}` as Hex,
+        },
+      };
     }
 
     const txObj = payload.tx as EvmCallObject;
@@ -148,14 +193,12 @@ function buildCallFromRequest(req: GuardRequest):
       return { ok: false, reason: "Invalid tx.to address" };
     }
     const valBig = BigInt(txObj.value ?? "0");
+    const sender = resolveSender([txObj.from, payload.intent?.from]);
+    if (!sender.ok) return sender;
     return {
       ok: true,
       call: {
-        from: (txObj.from && /^0x[0-9a-fA-F]{40}$/.test(txObj.from)
-          ? txObj.from.toLowerCase()
-          : payload.intent?.from && /^0x[0-9a-fA-F]{40}$/.test(payload.intent.from)
-            ? payload.intent.from.toLowerCase()
-            : "0x0000000000000000000000000000000000000001") as Hex,
+        from: sender.from,
         to: txObj.to.toLowerCase() as Hex,
         data: ((txObj.data && txObj.data.startsWith("0x") ? txObj.data : "0x") as Hex),
         value: `0x${valBig.toString(16)}` as Hex,
@@ -182,12 +225,12 @@ function buildCallFromRequest(req: GuardRequest):
         args: (intent.args ?? []).map(sanitizeSimArg),
       });
       const valBig = BigInt(intent.value ?? "0");
+      const sender = resolveSender([intent.from]);
+      if (!sender.ok) return sender;
       return {
         ok: true,
         call: {
-          from: (intent.from && /^0x[0-9a-fA-F]{40}$/.test(intent.from)
-            ? intent.from.toLowerCase()
-            : "0x0000000000000000000000000000000000000001") as Hex,
+          from: sender.from,
           to: intent.to.toLowerCase() as Hex,
           data,
           value: `0x${valBig.toString(16)}` as Hex,
@@ -234,7 +277,7 @@ export async function simulateOnRhc(
     };
   }
 
-  const built = buildCallFromRequest(req);
+  const built = await buildCallFromRequest(req, chainId);
   if (!built.ok) {
     return {
       decision: "abstain",
@@ -367,6 +410,36 @@ export async function simulateOnRhc(
           const k = `${toAddr}|${assetId}`;
           netDeltas.set(k, (netDeltas.get(k) ?? 0n) + rawAmt);
         }
+      } else if (topic0 === APPROVAL_TOPIC && lg.topics.length === 4) {
+        // SIM-2: ERC-721 approve(spender, tokenId): all three params indexed, empty data. Approving the zero
+        // address clears the approval.
+        const owner = topicToAddress(lg.topics[1]) ?? call.from.toLowerCase();
+        const spender = topicToAddress(lg.topics[2]) ?? "";
+        if (spender && spender !== ZERO_ADDR) {
+          approvals.push({
+            owner,
+            spender,
+            token: tokenAddr,
+            amount: `tokenId:${BigInt(lg.topics[3]!).toString()}`,
+            unlimited: false,
+          });
+        }
+      } else if ((topic0 === PERMIT2_APPROVAL_TOPIC || topic0 === PERMIT2_PERMIT_TOPIC) && lg.topics.length >= 4) {
+        // SIM-2: Permit2 allowance (owner, token, spender indexed; amount = first data word, uint160).
+        const owner = topicToAddress(lg.topics[1]) ?? call.from.toLowerCase();
+        const token = topicToAddress(lg.topics[2]) ?? "";
+        const spender = topicToAddress(lg.topics[3]) ?? "";
+        const amount = lg.data && lg.data.length >= 66 ? BigInt(lg.data.slice(0, 66)) : 0n;
+        if (amount > 0n) {
+          approvals.push({
+            owner,
+            spender,
+            token,
+            amount: amount.toString(),
+            unlimited: amount >= MAX_UINT128,
+            via: `permit2:${tokenAddr}`,
+          });
+        }
       } else if (topic0 === APPROVAL_TOPIC && lg.topics.length >= 3) {
         const owner = topicToAddress(lg.topics[1]) ?? call.from.toLowerCase();
         const spender = topicToAddress(lg.topics[2]) ?? "";
@@ -462,7 +535,7 @@ export async function simulateOnRhc(
         (allow) =>
           allow.token.toLowerCase() === app.token.toLowerCase() &&
           allow.spender.toLowerCase() === app.spender.toLowerCase() &&
-          app.amount !== "ALL" &&
+          /^\d+$/.test(app.amount) &&
           BigInt(app.amount) <= BigInt(allow.maxAmount)
       );
       if (!permitted) {
