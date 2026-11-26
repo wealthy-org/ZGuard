@@ -335,3 +335,5 @@ export async function proveQuoteAttestationAsync(
     updatedAt: now(),
   });
 }
+
+export { buildSp1QuoteFixtures, SP1_FIXTURE_REQUESTS, type Sp1QuoteFixture } from "./sp1-fixtures.js";

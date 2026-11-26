@@ -16,7 +16,8 @@
     "compile:sol": "node scripts/compile-solidity.mjs",
     "build": "node scripts/compile-solidity.mjs && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "deploy": "tsx src/deploy-verifier.ts"
+    "deploy": "tsx src/deploy-verifier.ts",
+    "fixtures:sp1": "node scripts/gen-sp1-fixtures.mjs"
   },
   "dependencies": {
     "@zguard/sdk": "workspace:*",
