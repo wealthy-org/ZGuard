@@ -462,7 +462,7 @@ User tiba di Console, langsung melihat Connect Wallet di atas, terhubung dalam s
 4. **Kriteria selesai:** tidak ada kode yang bisa mencatat "verified" tanpa proof SP1 asli. Tulis test negatif: memanggil verifier dengan `publicValues` bebas dan proof palsu harus **revert**.
 
 ## H2. Build guest dan ambil `programVKey`
-> **Status: ⛔ belum (butuh toolchain SP1 `cargo prove`; tidak tersedia di sandbox kerja).** Guest + crate aturan sudah siap dikompilasi; `packages/zk/sp1-quote-guest` memakai `zguard-quote-rules`.
+> **Status: 🟡 kode + CI siap (2026-11-27), menunggu run pertama workflow `SP1 guest`.** ~~⛔ belum (butuh toolchain SP1 `cargo prove`; tidak tersedia di sandbox kerja).~~ Jalur gratis (tanpa prover network): guest dinaikkan ke `sp1-zkvm 6.10.0` (lulus `cargo check` native), crate host `packages/zk/sp1-host` (`build.rs` = `sp1-build`; bin `vkey` mencetak `programVKey`; bin `parity` mengeksekusi ELF guest asli di zkVM untuk tiap fixture), lockfile guest + host dipin. Workflow `.github/workflows/sp1.yml`: `sp1up v6.10.0` → `cargo prove build` → `programVKey` + sha256 ELF di job summary + artifact → cek drift terhadap `packages/zk/artifacts/sp1-quote-guest.json` → parity. Commit `86a0b25`, `04620e3`, `2cd7c78`, `f04ec2d`. Langkah 3 (simpan vkey di repo) dikerjakan setelah run pertama.
 
 1. Dari `packages/zk/sp1-quote-guest`: `cargo prove build`. Pin versi `sp1-zkvm` dan SDK ke versi yang sama dengan `cargo-prove` yang dipakai (`cargo prove --version`); catat di README.
 2. Buat crate host (misal `packages/zk/sp1-host`) yang memakai `sp1-sdk`: `ProverClient`, `setup(ELF)` → simpan `vk.bytes32()` sebagai `programVKey`.
@@ -470,6 +470,7 @@ User tiba di Console, langsung melihat Connect Wallet di atas, terhubung dalam s
 4. **Kriteria selesai:** `cargo prove build` lulus di CI; `programVKey` tercetak dan tersimpan.
 
 ## H3. Samakan input guest dengan SDK TypeScript
+> **Update 2026-11-27:** fixture bersama `packages/zk/fixtures/sp1-quote-fixtures.json` (7 kasus: allow; deny Q-001/Q-002/Q-005/Q-003; abstain Q-DECODE/Q-007) dibuat dari pipeline TS (`buildSp1QuoteFixtures`); paritas TS ↔ Rust native ✅ 7/7 byte-identik (`quote-rules` `cargo test` 6/6), test kesegaran fixture di suite offline (`sp1-fixtures.test.ts` 3/3); paritas TS ↔ ELF guest di zkVM = langkah `parity` workflow SP1.
 > **Status: ✅ sebagian besar.** Vektor lintas bahasa (TS `encodeQuotePublicValues` == Rust `quote-rules`) untuk quoteHash/txHash/scopeHash/verdict/bitmask; `buildSp1GuestInput` mengisi input guest dari request yang sama. Guest membuktikan Q-001/Q-002/Q-005/Q-DECODE; Q-003/004/006/007 dilaporkan sebagai `hinted_mask` (host hint, tidak diklaim terbukti). Paritas lewat `client.execute` SP1 menunggu H2.
 
 1. `QuoteWitness` harus diisi **dari hasil `evaluateQuoteMatch` di SDK** (bukan dihitung ulang dengan cara lain). Tulis fixture bersama (JSON) yang dipakai test TS **dan** test Rust.
@@ -500,7 +501,7 @@ User tiba di Console, langsung melihat Connect Wallet di atas, terhubung dalam s
 5. **Kriteria selesai:** dari UI testnet, satu keputusan `allow` menghasilkan attestation yang berubah `pending → proven → verified` dengan `verifyTx` yang bisa dibuka.
 
 ## H6. Test dan CI wajib
-> **Status:** Rust `cargo test` ✅ 5/5 · Negatif Solidity ✅ 7/7 · CI ✅ (tanpa `cargo prove build`) · Paritas via execute ⛔ (H2) · E2E testnet ⛔ (H4).
+> **Status:** Rust `cargo test` ✅ 6/6 (termasuk fixture bersama) · Negatif Solidity ✅ 7/7 · CI ✅ + workflow `SP1 guest` (`cargo prove build` + parity, menunggu run pertama) · Paritas via execute 🟡 (workflow) · E2E testnet ⛔ (H4, butuh prover network).
 
 | Test | Harus membuktikan |
 |---|---|
@@ -572,11 +573,11 @@ Sesuai brief §8.3: jika belum selesai, rilis dengan Groth16 saja dan marketing 
 - [x] ✅ **selesai (live, wallet asli, 2026-11-25).** ~~402 terbukti lokal; bayar nyata butuh wallet/relayer.~~ §9.7 tx x402 USDG sukses di chain nyata dan 402 saat kredit habis (dengan relayer sungguhan, bukan simulasi).
   Bukti (sebagian): lokal setelah kredit dev habis → `POST /v1/verify` = HTTP 402 dengan `accepts[0].network = eip155:46630`, asset USDG testnet, `settlement.mode = deposit`, `minConfirmations = 3`. Jalur settlement dites offline (`poc-x402.test.ts`, `deposit.test.ts`).
   Bukti live: I9 baris 17 (402 dengan quote USDG di 46630 → deposit USDG nyata dari MetaMask menambah kredit; wallet kosong ditolak).
-- [ ] 🟡 **kode selesai (2026-11-27); menunggu env Vercel `ZGUARD_BUYBACK_WALLET` = Safe; eksekusi buyback menunggu token produk (P2).** ~~butuh alamat milik ZGuard.~~ §9.9 buyback: catat penerimaan fee dan alamat treasury di config.
+- [x] ✅ **selesai (2026-11-27); eksekusi buy + burn otomatis = Phase 2 (menunggu token produk).** ~~kode selesai; menunggu env Vercel `ZGUARD_BUYBACK_WALLET` = Safe.~~ ~~butuh alamat milik ZGuard.~~ §9.9 buyback: catat penerimaan fee dan alamat treasury di config.
   Status: variabel `ZGUARD_X402_PAY_TO`, `ZGUARD_BUYBACK_WALLET`, `ZGUARD_PONS_TOKEN_ADDRESS` terdokumentasi di `.env.example`; nilainya diisi user.
   Update 2026-11-27: pay-to = Safe "ZGuard Ops" `0xad55…fa6c` (live di `/v1/config`). Temuan diperbaiki: **[BB-1]** `ZGUARD_BUYBACK_REVENUE_BPS` tidak divalidasi; nilai `50.5`/`abc` membuat `BigInt()` melempar di `computeBuybackShare` **setelah** kredit dipotong → semua panggilan berbayar 500; `-1`/`20000` menghasilkan porsi negatif/200% → kini integer 0..10000, selain itu default 10000 + error config. **[BB-2]** alamat buyback/token/burn dipublikasikan apa adanya di `/v1/config`, dan pay-to/buyback bisa menunjuk kontrak pihak ketiga (mis. buyback vault pons) sehingga pendapatan masuk ke pihak lain → kini divalidasi, disembunyikan bila tidak valid (`buyback.configErrors`), kontrak pons/Uniswap/USDG/Paxos ditolak (`FOREIGN_PROTOCOL_ADDRESSES`). Pencatatan penerimaan fee: `apps/api/scripts/buyback-report.ts` merekonsiliasi setiap `Transfer` USDG ke pay-to, ledger admin (charged + buyback accrued), USDG keluar dari buyback wallet (buy) dan burn token produk, masing-masing dengan tx hash.
   Bukti: `config.ts` `resolveBuybackConfig`/`FOREIGN_PROTOCOL_ADDRESSES`/`resolvePayTo` · `apps/api/test/poc-buyback.test.ts` (5 merah di kode lama termasuk `RangeError`, 11/11 hijau) · commit `275340e`, `4fc62b9`, `9618bd1` · `corepack pnpm test` 211/211 + 17/17 · `tsx scripts/buyback-report.ts --chain 46630` → 1 penerimaan 3.000000 USDG tx `0x522cb51c22466429b14265e10739e153361e3ed243d3d7ce35cb7b9594d52d14` ke Safe; status "product token not launched yet".
-  Sisa: user mengisi `ZGUARD_BUYBACK_WALLET` di Vercel API → cek `/v1/config` `buyback.buybackWallet` + `configErrors: []`. Buy + burn otomatis = Phase 2 (setelah token ada).
+  ~~Sisa: user mengisi `ZGUARD_BUYBACK_WALLET` di Vercel API~~ → live `GET https://zguard-delta.vercel.app/v1/config`: `buyback.buybackWallet = 0xad5501954A52792280D868F7e613Efcc4F80fa6c` (Safe "ZGuard Ops"), `configErrors: []`, `buybackRevenueBps: 10000`. Buy + burn otomatis = Phase 2 (setelah token ada); skrip laporan sudah menelusuri tx buy/burn begitu `ZGUARD_PONS_TOKEN_ADDRESS` diisi.
 - [x] Ukur dan laporkan latensi p95 `/v1/guard` (target < 800 ms) dan quote-match lokal (< 10 ms).
   Bukti: `GET /v1/metrics` (`LatencyRecorder`, `app.ts` ~123) · lokal → RPC testnet 46630 publik: `POST /v1/guard` 18 request p50 89 ms, **p95 217 ms**, 0 error 5xx · quote-match offline < 10 ms dites di `acceptance.test.ts` §9.1 · angka produksi diambil ulang setelah deploy
 - [ ] ⏸ **DITUNDA (mainnet, setelah testnet hijau)** Default produksi ke 4663 (saat ini tetap testnet 46630), plus acceptance mainnet via UI.
