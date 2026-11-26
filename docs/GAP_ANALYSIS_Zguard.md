@@ -518,10 +518,12 @@ Sesuai brief §8.3: jika belum selesai, rilis dengan Groth16 saja dan marketing 
 > **Cara pakai:** kerjakan dari atas. Centang setelah ada bukti (log, tx hash, screenshot, hasil `curl`). Audit ini **belum deep dive penuh**: bagian "Crosscheck" adalah area kode yang belum saya baca teliti, jadi anak dev wajib memeriksanya sendiri dan melapor. Tidak ada estimasi waktu.
 
 ## I1. Deploy dan live (blocker)
-- [ ] ⛔ **butuh akses Vercel user.** Deploy `apps/api` sebagai proyek Vercel terpisah (env: RPC produksi, `DATABASE_URL` Neon, `ZGUARD_X402_PAY_TO`, relayer). Bukti: `curl https://<api>/health` = 200.
+- [x] ✅ **selesai (live, 2026-11-25).** ~~butuh akses Vercel user.~~ Deploy `apps/api` sebagai proyek Vercel terpisah (env: RPC produksi, `DATABASE_URL` Neon, `ZGUARD_X402_PAY_TO`, relayer). Bukti: `curl https://<api>/health` = 200.
   Status: kode API siap (`apps/api/vercel.json`, `src/vercel.ts`); env yang perlu diisi tercantum di `.env.example` dan README bagian Deploy.
-- [ ] ⛔ **butuh akses Vercel user (kode sudah siap).** Isi `ZGUARD_INTERNAL_API_URL` di proyek web, redeploy web dengan perbaikan `next.config.mjs` + route fallback. Bukti: `/health`, `/v1/config`, `/v1/registry` di zguard-delta.vercel.app tidak lagi 308.
+  Bukti live: `curl https://zguard-delta.vercel.app/health` = 200 (chain 46630, storage `neon-postgres`, sequencer up) · dipantau tiap 15 menit oleh GitHub Actions "Production monitor" (`api_health` ✅, run #1 2026-11-26).
+- [x] ✅ **selesai (live, 2026-11-25).** ~~butuh akses Vercel user (kode sudah siap).~~ Isi `ZGUARD_INTERNAL_API_URL` di proyek web, redeploy web dengan perbaikan `next.config.mjs` + route fallback. Bukti: `/health`, `/v1/config`, `/v1/registry` di zguard-delta.vercel.app tidak lagi 308.
   Status: lihat C3. Tanpa env, respons sekarang 503 `misconfigured`, bukan 308.
+  Bukti live: `/health`, `/v1/config`, `/v1/registry` di zguard-delta.vercel.app = 200 (tidak 308); skenario Console 6/6 PASS lewat web live (I9 baris 4–9).
 - [x] Buka Console live: pastikan UI **tidak** menampilkan hasil ALLOW/DENY dari "offline fallback" tanpa label jelas. Tambah banner "API tidak terhubung" bila `/v1/guard` gagal. Bukti: screenshot saat API dimatikan.
   Bukti: `apps/web/src/components/Navbar.tsx` (banner `api-offline-banner` bila `/v1/config` gagal), `ConsolePage.tsx` `run()` (HTTP ≥500 dianggap gagal; log menulis `✗ <alasan>` dan `EXAMPLE FIXTURE (not a live verdict)`) · `next build` lulus · commit `1fbfc06` · screenshot live menunggu deploy
 - [x] Badge chain di navbar harus berasal dari `/v1/config`, bukan nilai bawaan.
@@ -558,10 +560,12 @@ Sesuai brief §8.3: jika belum selesai, rilis dengan Groth16 saja dan marketing 
   - ✅ curve non-Pons (TOAST, `kind=other`) 3 tx → MATCH 4/4 masing-masing
   - ✅ **trade curve Pons** (KOIP `0x9118…2365`, `kind=pons_curve`, curve `0x7206…F3A5`, `buy(uint256,uint256)` 0.0005 ETH oleh Akun B) tx `0xc00a6ed0a59b9c5e0d0d383f8112f8ce2bff6a5a603532009e9355643e1bdc73` → **MATCH 4/4** (prediksi 195407.229764919120663678 KOIP = onchain; ETH −0.0005 pembeli / +0.0005 curve)
   - Catatan: RPC publik testnet hanya menyimpan state ±20 menit, jadi script harus dijalankan segera setelah tx.
-- [ ] 🟡 **test guard-off selesai di SDK; integrasi butuh akses repo Perm/terminal.** §9.5 integrasi nyata di Perm dan terminal; test "guard dimatikan → signer menolak / UI hard-fail". Butuh akses repo Perm dan terminal.
+- [x] ✅ **Perm selesai (live mainnet, 2026-11-26); terminal menunggu repo.** ~~test guard-off selesai di SDK; integrasi butuh akses repo Perm/terminal.~~ §9.5 integrasi nyata di Perm dan terminal; test "guard dimatikan → signer menolak / UI hard-fail". Butuh akses repo Perm dan terminal.
   Bukti (bagian SDK): `apps/api/test/c8-integrations.test.ts` 5/5 · commit `0d6f9b8`
-- [ ] 🟡 **402 terbukti lokal; bayar nyata butuh wallet/relayer.** §9.7 tx x402 USDG sukses di chain nyata dan 402 saat kredit habis (dengan relayer sungguhan, bukan simulasi).
+  Bukti Perm: gate wajib fail-closed (lihat C8) · swap mainnet tx `0x88eeccb9…49f2` lewat guard · guard-off hanya via `PERM_ZGUARD_MODE=off` + banner merah. Terminal: repo belum ada.
+- [x] ✅ **selesai (live, wallet asli, 2026-11-25).** ~~402 terbukti lokal; bayar nyata butuh wallet/relayer.~~ §9.7 tx x402 USDG sukses di chain nyata dan 402 saat kredit habis (dengan relayer sungguhan, bukan simulasi).
   Bukti (sebagian): lokal setelah kredit dev habis → `POST /v1/verify` = HTTP 402 dengan `accepts[0].network = eip155:46630`, asset USDG testnet, `settlement.mode = deposit`, `minConfirmations = 3`. Jalur settlement dites offline (`poc-x402.test.ts`, `deposit.test.ts`).
+  Bukti live: I9 baris 17 (402 dengan quote USDG di 46630 → deposit USDG nyata dari MetaMask menambah kredit; wallet kosong ditolak).
 - [ ] ⛔ **butuh alamat milik ZGuard.** §9.9 buyback: catat penerimaan fee dan alamat treasury di config.
   Status: variabel `ZGUARD_X402_PAY_TO`, `ZGUARD_BUYBACK_WALLET`, `ZGUARD_PONS_TOKEN_ADDRESS` terdokumentasi di `.env.example`; nilainya diisi user.
 - [x] Ukur dan laporkan latensi p95 `/v1/guard` (target < 800 ms) dan quote-match lokal (< 10 ms).
@@ -569,9 +573,11 @@ Sesuai brief §8.3: jika belum selesai, rilis dengan Groth16 saja dan marketing 
 - [ ] ⏸ **DITUNDA (mainnet, setelah testnet hijau)** Default produksi ke 4663 (saat ini tetap testnet 46630), plus acceptance mainnet via UI.
 - [x] Skenario UI: jalankan keenam skenario Console di **testnet** (mainnet ditunda), simpan screenshot dan JSON.
   Bukti: `apps/web/scripts/check-console-scenarios.ts` (memakai `buildScenarios` dari Console, lewat proxy web → API → RHC 46630) · 6/6 PASS: ok=allow (usdg), pons=allow (pons_curve), stock_or_grad=allow (pons_graduated_v4), spoof=deny `T-MINT,C-FINDING,T-LP`, approve=deny `Q-006,S-APPROVE`, undecodable=abstain `Q-DECODE,S-FAIL` · commit `d95750b` · screenshot live menunggu deploy
-- [ ] ⛔ **butuh browser + wallet asli.** Uji wallet asli (MetaMask/Rabby/Robinhood Wallet): Connect, Sign Valid (popup muncul), Tamper (tidak ada popup).
-- [ ] 🟡 Uji tampilan mobile (navbar dengan tombol Connect, Console, Docs).
+- [x] ✅ **selesai (live, MetaMask, 2026-11-25).** ~~butuh browser + wallet asli.~~ Uji wallet asli (MetaMask/Rabby/Robinhood Wallet): Connect, Sign Valid (popup muncul), Tamper (tidak ada popup).
+  Bukti: I9 baris 2, 11, 12 (Connect + switch 46630 tanpa popup tanda tangan; Sign Valid → popup; Tamper payTo → deny, tanpa popup).
+- [x] ✅ **selesai (diuji user, 2026-11-25).** Uji tampilan mobile (navbar dengan tombol Connect, Console, Docs).
   Status: tombol `WalletPill` ada di bar mobile (ikon saja di < sm); uji visual di perangkat nyata belum.
+  Bukti: I9 baris 19 (navbar, Console, Docs tanpa layout rusak).
 
 ## I5. Crosscheck: area kode yang belum saya baca teliti
 Periksa satu per satu. Untuk tiap item tulis hasilnya (aman / ada bug + PoC) di bawah daftar ini.
@@ -608,6 +614,10 @@ Jalankan lewat Node/RPC publik atau Alchemy, lampirkan output di PR.
 - [x] Test Solidity (Foundry) untuk `ZGuardQuoteVerifier`.
   Bukti: `packages/zk/foundry/test/ZGuardQuoteVerifier.t.sol` · `forge test -vv` · 7/7 lulus · commit `f1f064d`
 - [ ] 🟡 **timelock + two-step ownership ada di kontrak; multisig dan verifikasi Blockscout setelah deploy.** Multisig + timelock untuk owner verifier sebelum mainnet; verifikasi source di Blockscout.
+  **Update 2026-11-26: multisig — latihan testnet ✅, mainnet berikutnya.** Safe{Wallet} resmi mendukung Robinhood Chain 4663 dan testnet 46630; singleton Safe sudah ada di kedua chain. Rencana mainnet: Safe 2-dari-3 menjadi `ZGUARD_X402_PAY_TO`, treasury Perm, dan owner Perm Router + v4/v3 adapter (transfer dua langkah). Pause guardian tetap EOA terpisah untuk pause darurat. Owner verifier ZGuard menyusul setelah deploy SP1.
+  Bukti testnet:
+  - Safe `0xdf495CaeFa70b40B23A8FD1934CDa144ea3e3298`, dibuat lewat SafeProxyFactory pada tx `0xc0436051…f222e`: SafeL2 v1.5.0, owner `0x141D…86a8`/`0x1FBa…f0d9`/`0x3d2f…e3Bf`, threshold 2, tanpa module/guard.
+  - `execTransaction` tx `0x3a6fef78ef99e0ee5152f031f7df4091bd71c4e55b7ffa3881a00dcda2e375eb` (blok 158036076): 2 tanda tangan (130 byte), pengirim `0x3d2f…`, 0.0005 ETH ke `0x141D…`. Event `ExecutionSuccess` cocok dengan safeTxHash `0x380adfb1…0fe04`, dihitung ulang sendiri via EIP-712 (chainId 46630). Nonce 0 → 1.
 - [x] Monitoring: RPC, Neon, kegagalan prover, alert saldo relayer. (kegagalan prover menunggu SP1)
   Status: `/health` (sequencer, storage) dan `/v1/metrics` (latensi, 5xx) tersedia sebagai sumber; alerting eksternal belum dipasang (butuh layanan monitoring user).
   **Update 2026-11-26: monitor terjadwal aktif ✅** (secret `PERM_ZGUARD_API_KEY` dipasang user; run manual GitHub Actions "Production monitor" #1 hijau 5/5: api_health chain 46630 · neon-postgres · block age 1s; api_payment payTo 0x141D…86a8 · deposit; web_home 200; perm_gate enforce · ready · eip155:4663; perm_credit 0.145000 USDG ≈ 9 swaps). Detail: `.github/workflows/monitor.yml` menjalankan `scripts/monitor.mjs` tiap 15 menit. Run yang gagal jadi merah dan GitHub mengirim email; opsional webhook Discord/Slack. Yang dicek:
