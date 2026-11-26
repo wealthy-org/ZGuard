@@ -574,8 +574,10 @@ offchain · dev only, refused when NODE_ENV=production`}
               />
               <Note kind="assume">
                 Revenue model: 100% of net hosted-API revenue to buyback and burn of the pons-launched product token
-                ($ZGUARD ticker unconfirmed) after launch, unless an operational treasury share is set. Burn address
-                0x000000000000000000000000000000000000dEaD. Third-party reference token addresses are never used.
+                ($ZGUARD, not launched yet) after launch, unless an operational treasury share is set. Burn address
+                0x000000000000000000000000000000000000dEaD. Third-party reference token addresses are never used. The
+                launch and every buyback are Safe-signed batches from zguard-terminal; a buyback batch exists only
+                behind a ZGuard allow for its exact bytes.
               </Note>
             </Section>
 
