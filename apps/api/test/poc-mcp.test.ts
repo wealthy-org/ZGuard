@@ -71,7 +71,7 @@ function fakeApi(paths: string[]) {
 
 async function callCheckToken(args: Record<string, unknown>) {
   const paths: string[] = [];
-  const server = createZGuardMcpServer({ apiUrl: "http://zguard.local", apiKey: "zg_test", fetchImpl: fakeApi(paths) });
+  const server = createZGuardMcpServer({ apiUrl: "https://zguard.local", apiKey: "zg_test", fetchImpl: fakeApi(paths) });
   const [a, b] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: "poc", version: "0" });
   await Promise.all([server.connect(b), client.connect(a)]);

@@ -488,10 +488,10 @@ describe("ZGuard Dev Brief §9 Acceptance Criteria (Live RHC 4663 + Hono + MCP +
     const { apiKey } = (await regResp.json()) as { apiKey: string };
 
     const mcpServer = createZGuardMcpServer({
-      apiUrl: "http://zguard.local",
+      apiUrl: "https://zguard.local",
       apiKey,
       fetchImpl: (url, init) =>
-        app.request(String(url).replace("http://zguard.local", ""), init),
+        app.request(String(url).replace("https://zguard.local", ""), init),
     });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const mcpClient = new Client({ name: "test-agent", version: "0.1.0" });
