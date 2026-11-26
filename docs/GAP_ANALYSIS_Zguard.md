@@ -531,7 +531,12 @@ Sesuai brief §8.3: jika belum selesai, rilis dengan Groth16 saja dan marketing 
 
 ## I4. Kepatuhan brief yang belum ada bukti
 - [ ] ⏸ **DITUNDA (mainnet, setelah testnet hijau)** §9.1 dump JSON `/v1/guard` di **mainnet 4663** untuk swap USDG atau Stock Token.
-- [ ] ⛔ **butuh wallet dev ber-saldo + tx nyata.** §9.3 satu swap Uniswap v4 ber-hook Pons dan satu trade curve Pons: `balanceChanges` cocok dengan saldo onchain setelah tx uji (wallet dev). Tx revert → `S-REVERT`.
+- [ ] 🟡 **sebagian (2026-11-26).** §9.3 satu swap Uniswap v4 ber-hook Pons dan satu trade curve Pons: `balanceChanges` cocok dengan saldo onchain setelah tx uji (wallet dev). Tx revert → `S-REVERT`.
+  Bukti: `apps/api/scripts/check-sim-vs-chain.ts` (replay tx yang sudah mined lewat `simulateOnRhc` di state blok parent, bandingkan dengan log `Transfer` + selisih saldo ETH onchain) · `tsx scripts/check-sim-vs-chain.ts <txHash>` ·
+  - ✅ swap **graduated Pons v4** (FOLDY, `kind=pons_graduated_v4`, lewat PoolManager `0x8366…0951`) tx `0xfd5b718e…e894` → **MATCH 6/6** (token + ETH semua alamat, termasuk penerima fee)
+  - ✅ **tx revert** (`createLaunch` gagal) tx `0xc1b985eb…e9e1` → simulasi `revert`, `deny S-REVERT` → MATCH
+  - ✅ curve non-Pons (TOAST, `kind=other`) 3 tx → MATCH 4/4 masing-masing
+  - ⏳ **trade curve Pons** (`kind=pons_curve`): belum ada tx baru dalam jendela state RPC; menunggu satu trade kecil oleh user (RPC publik hanya menyimpan state ±20 menit, cek harus dijalankan segera setelah tx)
 - [ ] 🟡 **test guard-off selesai di SDK; integrasi butuh akses repo Perm/terminal.** §9.5 integrasi nyata di Perm dan terminal; test "guard dimatikan → signer menolak / UI hard-fail". Butuh akses repo Perm dan terminal.
   Bukti (bagian SDK): `apps/api/test/c8-integrations.test.ts` 5/5 · commit `0d6f9b8`
 - [ ] 🟡 **402 terbukti lokal; bayar nyata butuh wallet/relayer.** §9.7 tx x402 USDG sukses di chain nyata dan 402 saat kredit habis (dengan relayer sungguhan, bukan simulasi).
@@ -628,7 +633,7 @@ Urutan wajib. Tiap tahap dicatat di dokumen ini.
 | 14 | Halaman ZK: fixture allow dan deny Q-001 | Status `pending → proven → verified`, link `verifyTx` terbuka di explorer | sebagian: berhenti di `pending` (jujur) | allow → verdict allow / bitmask 0x0, deny → deny / 0x1; status `pending`, note "SP1 prover not configured". `verified` butuh prover + verifier (H2–H5) |
 | 15 | RHC Registry: daftar Stock Token dan cek alamat | Data live, token ticker kembar tidak berlabel `stock_token` | **jalan (live, 2026-11-25)** | `/v1/registry` 5 stock token testnet; preset UI live; Mock USDG berlabel `other` |
 | 16 | API & Pricing: register, balance, receipts | Register OK, receipts hanya milik tenant, tanpa key = 401 | **jalan (live API)** | register 200 + key `zg_live_…`; `/v1/receipts` tanpa key = 401; pendapatan global hanya muncul dengan `x-admin-key` (`poc-store.test.ts`) |
-| 17 | Billing: panggilan berbayar sampai kredit habis | 402 dengan quote USDG di 46630; bayar nyata menambah kredit; bayar dari wallet kosong ditolak | sebagian | 402 ✅ (eip155:46630, USDG, mode deposit, 3 konfirmasi). Bayar nyata belum (butuh USDG faucet); wallet kosong ditolak ✅ di test offline |
+| 17 | Billing: panggilan berbayar sampai kredit habis | 402 dengan quote USDG di 46630; bayar nyata menambah kredit; bayar dari wallet kosong ditolak | **jalan (live, wallet asli, 2026-11-25)** | Panel Console "Buy credit · USDG": tx [`0x1aee4e73…4bf0`](https://explorer.testnet.chain.robinhood.com/tx/0x1aee4e73ef9b3194b58548cad3f826b134846507bee358a501f9d97ac7b14bf0) status success, `Transfer` 0.1 USDG `0x3d2f…e3Bf` → payTo `0x141D…86a8`; kredit 0.16 USDG (0.06 gratis + 0.10). Klaim tx yang sama oleh wallet lain → 402 "No USDG transfer from claim signer" (X402-4 live); tanpa `claimSignature` → 402; wallet 0 USDG → ditolak sebelum popup (pre-check saldo). Replay oleh pemilik: dites offline (`deposit.test.ts`) |
 | 18 | Docs: contoh `curl` dan konfigurasi MCP | Berjalan apa adanya | **jalan setelah diperbaiki (2026-11-25)** | Sebelumnya TIDAK jalan: `pnpm add @zguard/sdk` dan `npx @zguard/mcp` = npm 404, fungsi `guard` tidak diekspor SDK, network mainnet 4663, curl berisi `{…}`. Sekarang: build dari repo, curl/SDK/MCP testnet 46630 dengan base URL = origin halaman; blok curl & SDK dijalankan persis seperti dirender → `allow`; MCP via `node packages/mcp/dist/index.js` → 5 tools, `tools/call` jalan ke API live |
 | 19 | Tampilan mobile (navbar, Console, Docs) | Tidak ada layout rusak | **jalan (diuji user, 2026-11-25)** | Navbar, Console, Docs tanpa layout rusak |
 | 20 | Fail-closed: matikan API atau RPC | Hasil bukan allow, signer menolak | jalan (lokal) | API tidak terkonfigurasi → 503 `abstain P-UNAVAIL`; signer menolak non-allow (`c8-integrations`, acceptance §9.4) |
@@ -656,6 +661,11 @@ Urutan wajib. Tiap tahap dicatat di dokumen ini.
 <!-- diisi head dev -->
 
 ---
+
+> **Keputusan user 2026-11-26: ZK SP1 ditunda.** Attestation tetap `pending` (berlabel jujur di UI, API, README). Catatan teknis untuk saat dilanjutkan:
+> 1. Gateway SP1 Succinct (`0x397A…dA9B` groth16, `0x3B60…185e` plonk) **tidak ada** di RHC 46630 → verifier `SP1VerifierGroth16` harus di-deploy sendiri (CREATE2 deployer `0x4e59…956C` tersedia).
+> 2. Succinct Prover Network kini butuh `sp1-sdk >= 6.1` dan pembayaran token PROVE (Ethereum mainnet); guest masih `sp1-zkvm 4.1.0` → perlu upgrade guest + verifier ke v6.
+> 3. `proveQuoteAttestationAsync` memanggil prover sinkron dengan timeout 30 dtk; proof Groth16 butuh menit → perlu prover service async (job + polling) yang di-host di luar Vercel.
 
 # BAGIAN J: Hasil deep pass jalur prioritas (quote-match, x402, store), 2026-11-25
 > **Yang dibaca penuh:** `quote-match.ts` (913 baris), `x402.ts` (bagian verifikasi dan settlement), `store.ts` (charge, nonce, receipts), route `/v1/receipts` dan `/v1/attestation`.
