@@ -260,13 +260,35 @@ export function createZGuardMcpServer(opts: ZGuardMcpOptions = {}) {
       }
 
       try {
-        const res = await client.guard({
-          network: args.network,
-          token: args.token,
-          content: contentInput,
-          checks: ["token_risk"],
+        // MCP-1: use the dedicated POST /v1/token-risk endpoint. POST /v1/guard always adds the
+        // server-required checks (quote + simulation, C4), so a token-only call there was denied
+        // with Q-005/S-FAIL for EVERY token, including canonical USDG.
+        const res = (await client.tokenRisk(args.token, args.network)) as unknown as GuardResponse & {
+          token_risk?: GuardResponse["checks"]["token_risk"];
+        };
+        const { token_risk: _tokenRisk, ...guardShape } = res;
+        if (!contentInput || !guardShape.checks?.token_risk) {
+          return formatToolJson(guardShape);
+        }
+        // Caller-supplied metadata is scanned locally (same deterministic rules as /v1/check, no extra
+        // charge) and merged with the same modes as the key-less path.
+        const checks: GuardResponse["checks"] = {
+          ...guardShape.checks,
+          content: scanContent(contentInput),
+        };
+        const agg = aggregateDecision({
+          checks,
+          modes: { token_risk: "required", content: "advisory" },
         });
-        return formatToolJson(res);
+        return formatToolJson({
+          ...guardShape,
+          decision: agg.decision,
+          reason: agg.reason,
+          codes: agg.codes,
+          expires_at: agg.decision === "allow" ? guardShape.expires_at : agg.expires_at,
+          checks,
+          flags: agg.flags,
+        });
       } catch (err) {
         if (err instanceof X402PaymentRequiredError) {
           return formatToolJson({ status: 402, paymentRequired: err.quote });
