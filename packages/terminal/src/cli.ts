@@ -9,6 +9,13 @@
  *   zguard-terminal buy  <token> <eth>         [--slippage-bps 300] --yes
  *   zguard-terminal sell <token> <tokens|all>  [--slippage-bps 300] --yes
  *   zguard-terminal can-launch [factory]
+ *   zguard-terminal token-launch-plan  [--network 4663|46630] [--salt-nonce 0] [--out file]
+ *   zguard-terminal token-buyback-plan <eth> [--token addr] [--slippage-bps 300] [--out file]   (4663)
+ *   zguard-terminal token-status [token]                                                      (4663)
+ *   zguard-terminal token-metadata [--write file]                                             (46630)
+ *
+ * The token-* commands never sign: they dry-run against the chain and write a Safe Transaction Builder
+ * batch for the ZGuard Ops Safe (launcher, deployer, creator-fee recipient, buyback wallet).
  *
  * Environment:
  *   TERMINAL_PRIVATE_KEY   wallet key (buy/sell; status/quote use it only for the address)
@@ -17,6 +24,10 @@
  *   ZGUARD_TERMINAL_CHAIN  46630 (default) or 4663; --network overrides
  *   RHC_RPC_URL            default: the public RPC of the chosen chain
  *   ZGUARD_TERMINAL_MODE   "off" makes the terminal refuse to sign (it never trades unguarded)
+ *   ZGUARD_PONS_TOKEN_ADDRESS     $ZGUARD token (token-buyback-plan / token-status)
+ *   ZGUARD_BUYBACK_WALLET         Safe that launches and buys back (default: ZGuard Ops Safe)
+ *   ZGUARD_TOKEN_CREATOR_TAX_BPS  creator tax at launch (default 0)
+ *   ZGUARD_TOKEN_TWITTER / ZGUARD_TOKEN_TELEGRAM   optional socials (https URLs)
  */
 import {
   createPublicClient,
@@ -32,17 +43,33 @@ import {
   type Hex,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { writeFileSync } from "node:fs";
 import {
   GuardBlockedError,
   GuardDisabledError,
   PONS_TESTNET_CONTRACTS,
   RHC_PUBLIC_RPC_MAINNET,
   RHC_PUBLIC_RPC_TESTNET,
+  ZGuardClient,
   type EvmSignerLike,
   type GuardResponse,
 } from "@zguard/sdk";
 import { PONS_TOKEN_ABI } from "./pons.js";
 import { createPonsTerminal, TerminalGuardUnavailableError, type ChainReader, type TerminalMode } from "./terminal.js";
+import {
+  buildLaunchMetadata,
+  cidV1Raw,
+  defaultTokenConfig,
+  planBuyback,
+  planLaunch,
+  TESTNET_CHAIN_ID,
+  TokenGuardUnavailableError,
+  tokenStatus,
+  ZGUARD_LOGO_IMAGE,
+  ZGUARD_OPS_SAFE,
+  type SafeTxBuilderFile,
+  type TokenChainReader,
+} from "./token.js";
 
 const RED = "\x1b[41m\x1b[97m";
 const GREEN = "\x1b[32m";
@@ -76,6 +103,10 @@ function usage(): never {
   zguard-terminal buy  <token> <eth>        [--slippage-bps 300] [--network 46630|4663] --yes
   zguard-terminal sell <token> <tokens|all> [--slippage-bps 300] [--network 46630|4663] --yes
   zguard-terminal can-launch [factory]
+  zguard-terminal token-launch-plan  [--network 4663|46630] [--salt-nonce 0] [--out file]
+  zguard-terminal token-buyback-plan <eth> [--token addr] [--slippage-bps 300] [--out file]   (4663)
+  zguard-terminal token-status [token]                                                      (4663)
+  zguard-terminal token-metadata [--write file]                                             (46630)
 
 Env: TERMINAL_PRIVATE_KEY, ZGUARD_API_KEY, ZGUARD_API_URL, ZGUARD_TERMINAL_CHAIN, RHC_RPC_URL`);
   process.exit(0);
@@ -164,6 +195,20 @@ async function main(): Promise<void> {
     onStep: (m) => console.log(`→ ${m}`),
   });
 
+  const tokenReader = publicClient as unknown as TokenChainReader;
+  const tokenSafe = getAddress(process.env.ZGUARD_BUYBACK_WALLET?.trim() || ZGUARD_OPS_SAFE);
+  const tokenCfg = () =>
+    defaultTokenConfig({
+      creatorTaxBps: Number(process.env.ZGUARD_TOKEN_CREATOR_TAX_BPS ?? 0),
+      socials: {
+        twitter: process.env.ZGUARD_TOKEN_TWITTER?.trim() ?? "",
+        telegram: process.env.ZGUARD_TOKEN_TELEGRAM?.trim() ?? "",
+        discord: "",
+        website: defaultTokenConfig().socials.website,
+        farcaster: "",
+      },
+    });
+
   const rpcChain = await publicClient.getChainId();
   if (rpcChain !== chainId) throw new Error(`RPC ${rpc} is chain ${rpcChain}, expected ${chainId}`);
 
@@ -242,17 +287,89 @@ async function main(): Promise<void> {
       console.log(`canLaunch(${from}) on ${factory}: ${ok === null ? "not supported by this factory (no launch offered)" : ok}`);
       return;
     }
+    case "token-launch-plan": {
+      const plan = await planLaunch({
+        chainId,
+        reader: tokenReader,
+        safe: tokenSafe,
+        cfg: tokenCfg(),
+        saltNonce: flags["salt-nonce"] ? Number(flags["salt-nonce"]) : 0,
+      });
+      console.log(`${GREEN}launch dry-run OK${RESET} (eth_call from the Safe, nothing sent)`);
+      for (const [k, v] of Object.entries(plan.details)) if (k !== "metadataJson") console.log(`  ${k.padEnd(20)} ${v}`);
+      if (plan.details.metadataJson) console.log(`  ${DIM}pin these exact bytes on IPFS (CIDv1, raw leaves) so explorers show the logo: zguard-terminal token-metadata --write zguard-46630.json${RESET}`);
+      if (plan.dryRunToken) console.log(`  ${"dry-run token".padEnd(20)} ${plan.dryRunToken}\n  ${"dry-run curve".padEnd(20)} ${plan.dryRunCurve}`);
+      console.log(`  ${"launch fee".padEnd(20)} ${formatEther(plan.launchFee)} ETH (Safe holds ${formatEther(plan.safeBalance)} ETH)`);
+      if (plan.fundingNeeded > 0n) console.log(`  ${RED} FUND THE SAFE ${RESET} send >= ${formatEther(plan.fundingNeeded)} ETH to ${plan.safe} on ${chainId} before executing`);
+      writeSafeFile(plan.safeFile, (flags.out as string) || `zguard-${chainId}-token-launch.safe.json`);
+      return;
+    }
+    case "token-buyback-plan": {
+      const [amt] = rest;
+      if (!amt) usage();
+      const token = (flags.token as string) || process.env.ZGUARD_PONS_TOKEN_ADDRESS?.trim();
+      if (!token) throw new Error("set ZGUARD_PONS_TOKEN_ADDRESS or pass --token");
+      const apiKey = process.env.ZGUARD_API_KEY?.trim();
+      const client = apiKey ? new ZGuardClient({ baseUrl: apiUrl, apiKey, timeoutMs: 20_000 }) : null;
+      const plan = await planBuyback({
+        chainId,
+        reader: tokenReader,
+        token,
+        safe: tokenSafe,
+        quoteIn: parseEther(amt),
+        slippageBps,
+        mode,
+        evaluate: client ? (req) => client.guard(req) : undefined,
+      });
+      printVerdict(plan.receipt);
+      console.log(`curve ${plan.curve}\n${amt} ETH → ~${formatEther(plan.tokensOut)} ZGUARD to 0x…dEaD (min ${formatEther(plan.minTokensOut)})`);
+      if (plan.fundingNeeded > 0n) console.log(`${RED} FUND THE SAFE ${RESET} it holds ${formatEther(plan.safeBalance)} ETH; needs ${formatEther(plan.quoteIn)}`);
+      writeSafeFile(plan.safeFile, (flags.out as string) || `zguard-${chainId}-buyback-${Date.now()}.safe.json`);
+      console.log(`${DIM}The ZGuard allow expires at ${plan.receipt.expires_at}; execute promptly or plan again.${RESET}`);
+      return;
+    }
+    case "token-status": {
+      const token = rest[0] || process.env.ZGUARD_PONS_TOKEN_ADDRESS?.trim();
+      if (!token) throw new Error("set ZGUARD_PONS_TOKEN_ADDRESS or pass the token address");
+      const st = await tokenStatus({ reader: tokenReader, token, safe: tokenSafe });
+      console.log(`token    ${st.token}\ncurve    ${st.curve} · graduated ${st.graduated}`);
+      console.log(`deployer ${st.deployer} · fee recipient ${st.creatorFeeRecipient} · tax ${st.creatorTaxBps} bps · pons buyback ${st.buybackEnabled}`);
+      console.log(`supply   ${formatEther(st.totalSupply)} · burned (0x…dEaD) ${formatEther(st.burned)}`);
+      console.log(st.ownedBySafe ? `${GREEN}Safe is deployer and fee recipient${RESET}` : `${RED} NOT OWNED BY THE SAFE ${RESET} expected ${tokenSafe}`);
+      return;
+    }
+    case "token-metadata": {
+      const built = buildLaunchMetadata({
+        chainId: TESTNET_CHAIN_ID,
+        creator: tokenSafe,
+        cfg: tokenCfg(),
+        image: { ...ZGUARD_LOGO_IMAGE, uri: tokenCfg().logo },
+      });
+      const cid = cidV1Raw(built.json);
+      if (typeof flags.write === "string") {
+        writeFileSync(flags.write, built.json);
+        console.log(`wrote ${flags.write} · keccak ${built.digest} · ipfs://${cid} (pin with CID v1 / raw leaves to get this CID)`);
+      } else console.log(`${built.json}\nkeccak ${built.digest}\nipfs://${cid}`);
+      return;
+    }
     default:
       usage();
   }
 }
+
+function writeSafeFile(file: SafeTxBuilderFile, path: string): void {
+  writeFileSync(path, `${JSON.stringify(file, null, 2)}\n`);
+  console.log(`${GREEN}Safe batch${RESET} ${path} · ${file.transactions.length} tx · Safe ${file.meta.createdFromSafeAddress}`);
+  console.log(`${DIM}Import it in Safe → Transaction Builder, check the decoded call, sign with 2 of 3 owners.${RESET}`);
+}
+
 
 main().catch((err: unknown) => {
   if (err instanceof GuardBlockedError) {
     console.error(`${RED} BLOCKED ${RESET} ${err.message}${err.codes?.length ? ` [${err.codes.join(",")}]` : ""}\nNothing was signed.`);
   } else if (err instanceof GuardDisabledError) {
     console.error(`${RED} UNGUARDED ${RESET} ${err.message}\nThe terminal does not sign with ZGuard switched off. Unset ZGUARD_TERMINAL_MODE.`);
-  } else if (err instanceof TerminalGuardUnavailableError) {
+  } else if (err instanceof TerminalGuardUnavailableError || err instanceof TokenGuardUnavailableError) {
     console.error(`${RED} ZGUARD UNAVAILABLE ${RESET} ${err.message}`);
   } else {
     console.error(err instanceof Error ? err.message : String(err));
