@@ -390,6 +390,7 @@ export function createZGuardApp(deps: AppDependencies = {}): {
         buybackWallet: config.buybackWallet,
         burnAddress: config.burnAddress,
         buybackRevenueBps: config.buybackRevenueBps,
+        configErrors: config.buybackConfigErrors,
         // Global ledger only for admins (x-admin-key); tenants see their own totals via /v1/receipts
         ledger: revenue,
       },

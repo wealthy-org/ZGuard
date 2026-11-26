@@ -6,11 +6,18 @@ import {
   BASE_PUBLIC_RPC_SEPOLIA,
   DEAD_BURN_ADDRESS,
   DEFAULT_ACTIVE_RHC_CHAIN_ID,
+  KNOWN_RHC_CONTRACTS,
+  PONS_TESTNET_CONTRACTS,
+  PONS_V1_CONTRACTS,
+  PONS_V2_CONTRACTS,
+  RHC_CANONICAL_ASSETS,
   RHC_MAINNET_CHAIN_ID,
   RHC_PUBLIC_RPC_MAINNET,
   RHC_PUBLIC_RPC_TESTNET,
+  RHC_TESTNET_ASSETS,
   RHC_TESTNET_CHAIN_ID,
   SOLANA_PUBLIC_RPC_DEVNET,
+  UNISWAP_V4_RHC,
   SOLANA_PUBLIC_RPC_MAINNET,
   type CheckMode,
   type CheckName,
@@ -146,6 +153,8 @@ export interface ZGuardAppConfig {
   buybackWallet: string | null;
   burnAddress: string;
   buybackRevenueBps: number;
+  /** §9.9: invalid buyback settings (values hidden); the offending field is null / the default. */
+  buybackConfigErrors: string[];
 
   checkModes: Record<CheckName, CheckMode>;
   allowTtlSeconds: number;
@@ -296,10 +305,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ZGuardAppConfi
     urlFetchMaxBytes: Number(env.ZGUARD_URL_FETCH_MAX_BYTES ?? 131_072),
 
     tokenTicker: env.ZGUARD_TOKEN_TICKER || "$ZGUARD",
-    ponsTokenAddress: env.ZGUARD_PONS_TOKEN_ADDRESS || null,
-    buybackWallet: env.ZGUARD_BUYBACK_WALLET || null,
-    burnAddress: env.ZGUARD_BURN_ADDRESS || DEAD_BURN_ADDRESS,
-    buybackRevenueBps: Number(env.ZGUARD_BUYBACK_REVENUE_BPS ?? 10000),
+    ...resolveBuybackConfig(env),
 
     checkModes,
     allowTtlSeconds: Number(env.ZGUARD_ALLOW_TTL_SECONDS ?? 120),
@@ -326,6 +332,78 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ZGuardAppConfi
   };
 }
 
+function collectAddresses(value: unknown, out: Set<string>): void {
+  if (typeof value === "string") {
+    if (/^0x[0-9a-fA-F]{40}$/.test(value)) out.add(value.toLowerCase());
+  } else if (value && typeof value === "object") {
+    for (const v of Object.values(value)) collectAddresses(v, out);
+  }
+}
+
+/**
+ * Third-party protocol / asset contracts on RHC. A ZGuard treasury, buyback wallet or product token must
+ * never be one of these (brief §10: do not reuse pons/Wormhole/Paxos buyback, burn or multisig addresses).
+ */
+export const FOREIGN_PROTOCOL_ADDRESSES: ReadonlySet<string> = (() => {
+  const out = new Set<string>();
+  collectAddresses([PONS_V2_CONTRACTS, PONS_V1_CONTRACTS, PONS_TESTNET_CONTRACTS, UNISWAP_V4_RHC, RHC_CANONICAL_ASSETS, RHC_TESTNET_ASSETS], out);
+  for (const k of Object.keys(KNOWN_RHC_CONTRACTS)) collectAddresses(k, out);
+  out.delete(DEAD_BURN_ADDRESS.toLowerCase());
+  return out;
+})();
+
+const EVM_ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
+
+/**
+ * §9.9 BB-1: buyback settings are validated like the pay-to address. Before, any string was published in
+ * /v1/config, and a non-integer ZGUARD_BUYBACK_REVENUE_BPS made BigInt() throw on every paid call.
+ */
+export function resolveBuybackConfig(env: NodeJS.ProcessEnv): {
+  ponsTokenAddress: string | null;
+  buybackWallet: string | null;
+  burnAddress: string;
+  buybackRevenueBps: number;
+  buybackConfigErrors: string[];
+} {
+  const errors: string[] = [];
+  const addr = (name: string, raw: string | undefined, opts: { allowDead?: boolean } = {}): string | null => {
+    const v = (raw ?? "").trim();
+    if (!v) return null;
+    if (!EVM_ADDR_RE.test(v) || /^0x0{40}$/i.test(v)) {
+      errors.push(`${name} is not a valid non-zero 0x EVM address; value hidden`);
+      return null;
+    }
+    const lower = v.toLowerCase();
+    if (!opts.allowDead && lower === DEAD_BURN_ADDRESS.toLowerCase()) {
+      errors.push(`${name} must not be the burn address`);
+      return null;
+    }
+    if (FOREIGN_PROTOCOL_ADDRESSES.has(lower)) {
+      errors.push(`${name} is a third-party protocol/asset contract (pons, Uniswap, USDG/Paxos, …), not a ZGuard address`);
+      return null;
+    }
+    return v;
+  };
+
+  const ponsTokenAddress = addr("ZGUARD_PONS_TOKEN_ADDRESS", env.ZGUARD_PONS_TOKEN_ADDRESS);
+  const buybackWallet = addr("ZGUARD_BUYBACK_WALLET", env.ZGUARD_BUYBACK_WALLET);
+  const burnAddress = addr("ZGUARD_BURN_ADDRESS", env.ZGUARD_BURN_ADDRESS, { allowDead: true }) ?? DEAD_BURN_ADDRESS;
+  if (ponsTokenAddress && buybackWallet && ponsTokenAddress.toLowerCase() === buybackWallet.toLowerCase()) {
+    errors.push("ZGUARD_PONS_TOKEN_ADDRESS and ZGUARD_BUYBACK_WALLET must differ");
+  }
+
+  let buybackRevenueBps = 10_000;
+  const rawBps = (env.ZGUARD_BUYBACK_REVENUE_BPS ?? "").trim();
+  if (rawBps) {
+    if (/^\d+$/.test(rawBps) && Number(rawBps) <= 10_000) {
+      buybackRevenueBps = Number(rawBps);
+    } else {
+      errors.push("ZGUARD_BUYBACK_REVENUE_BPS must be an integer 0..10000; using the default 10000");
+    }
+  }
+  return { ponsTokenAddress, buybackWallet, burnAddress, buybackRevenueBps, buybackConfigErrors: errors };
+}
+
 const PLACEHOLDER_PAY_TO = "0x0000000000000000000000000000000000004663";
 
 /** Validates the x402 treasury address; an invalid value is replaced by the placeholder and never exposed. */
@@ -347,6 +425,13 @@ export function resolvePayTo(
     return {
       x402PayTo: PLACEHOLDER_PAY_TO,
       x402PayToError: `${rawName} is not a valid 0x EVM address (42 chars, 0x + 40 hex); value hidden, payments refused`,
+    };
+  }
+  if (FOREIGN_PROTOCOL_ADDRESSES.has(raw.toLowerCase())) {
+    // §9.9: revenue must land in a ZGuard-controlled address, never a pons/Uniswap/USDG contract.
+    return {
+      x402PayTo: PLACEHOLDER_PAY_TO,
+      x402PayToError: `${rawName} is a third-party protocol/asset contract, not a ZGuard treasury; payments refused`,
     };
   }
   return { x402PayTo: raw, x402PayToError: null };
