@@ -11,6 +11,8 @@ import {
   ZGUARD_VERIFIER_ABI,
   buildInitialZkAttestation,
   encodeQuotePublicValues,
+  SP1_QUOTE_PROGRAM_VKEY,
+  getProgramVKey,
   isPlaceholderProgramVKey,
   proveQuoteAttestationAsync,
 } from "@zguard/zk";
@@ -72,8 +74,13 @@ describe("[ZK] honest attestation status (gaps C1, C9, D2)", () => {
     assert.ok(names.includes("verifySp1QuoteProof"));
   });
 
-  it("programVKey is flagged as placeholder until a real SP1 vkey is configured", () => {
-    assert.equal(isPlaceholderProgramVKey("groth16-sp1", fixture().programVKey), true);
+  it("groth16-sp1 attestations carry the real built SP1 programVKey; other systems stay flagged placeholder", () => {
+    assert.equal(fixture().programVKey, SP1_QUOTE_PROGRAM_VKEY);
+    assert.equal(isPlaceholderProgramVKey("groth16-sp1", fixture().programVKey), false);
+    assert.equal(isPlaceholderProgramVKey("halo2-kzg", getProgramVKey("halo2-kzg")), true);
+    // A real vkey alone proves nothing: without a prover + verifier the attestation stays pending.
+    assert.equal(fixture().status, "pending");
+    assert.equal(fixture().proof, null);
   });
 
   it("no prover configured => stays pending with a note, nothing claimed", async () => {

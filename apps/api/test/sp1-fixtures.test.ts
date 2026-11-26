@@ -8,7 +8,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { buildSp1QuoteFixtures } from "@zguard/zk";
+import { SP1_QUOTE_GUEST_BUILD, SP1_QUOTE_PROGRAM_VKEY, buildSp1QuoteFixtures } from "@zguard/zk";
 
 const committed = JSON.parse(
   readFileSync(new URL("../../../packages/zk/fixtures/sp1-quote-fixtures.json", import.meta.url), "utf8")
@@ -35,5 +35,17 @@ describe("[H3] SP1 shared fixtures", () => {
       assert.equal(f.expectedPublicValues.length, 2 + 160 * 2, f.name);
       assert.ok(f.expectedPublicValues.startsWith("0x238ad53218834f943da60c8bafd36c36692dcb35e6d76bdd93202f5c04c0baff"), f.name);
     }
+  });
+});
+
+describe("[H2] built SP1 programVKey", () => {
+  const artifact = JSON.parse(
+    readFileSync(new URL("../../../packages/zk/artifacts/sp1-quote-guest.json", import.meta.url), "utf8")
+  ) as { sp1Version: string; programVKey: string; elfSha256: string };
+
+  it("the TS constant equals the CI-built artifact (CI fails when the build drifts from the artifact)", () => {
+    assert.equal(SP1_QUOTE_PROGRAM_VKEY, artifact.programVKey);
+    assert.equal(SP1_QUOTE_GUEST_BUILD.sp1Version, artifact.sp1Version);
+    assert.equal(SP1_QUOTE_GUEST_BUILD.elfSha256, artifact.elfSha256);
   });
 });
