@@ -214,7 +214,9 @@ function buildCallFromRequest(req: GuardRequest):
 export async function simulateOnRhc(
   config: ZGuardAppConfig,
   client: PublicClient,
-  req: GuardRequest
+  req: GuardRequest,
+  /** State to simulate against. Default "latest"; a past block (hex) is used to replay a mined tx (§9.3 check). */
+  blockTag: string = "latest"
 ): Promise<SimulationCheckResult> {
   const chainId = parseChainIdFromNetwork(req.network);
   if (!isSupportedRhcChainId(chainId)) {
@@ -282,7 +284,7 @@ export async function simulateOnRhc(
             traceTransfers: true,
             validation: false,
           },
-          "latest",
+          blockTag,
         ],
         chainId
       ),
