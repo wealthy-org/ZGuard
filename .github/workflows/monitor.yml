@@ -1,0 +1,43 @@
+name: Production monitor
+
+# Ops gap: uptime + payment config + Perm ZGuard gate + Perm credit, every 15 minutes.
+# A failing run turns red and GitHub emails the repo owner. Optional webhook alert too.
+#
+# Repository secrets (Settings → Secrets and variables → Actions → Secrets):
+#   PERM_ZGUARD_API_KEY       Perm's zg_live_ key (enables the credit check)
+#   ZGUARD_ALERT_WEBHOOK_URL  optional Discord/Slack webhook
+# Repository variables (… → Variables), all optional:
+#   ZGUARD_MONITOR_API_URL, ZGUARD_MONITOR_WEB_URL, PERM_MONITOR_URL, ZGUARD_MONITOR_MIN_SWAPS
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-monitor
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Unit tests for the monitor
+        run: node --test scripts/monitor.test.mjs
+      - name: Check production
+        env:
+          ZGUARD_MONITOR_API_URL: ${{ vars.ZGUARD_MONITOR_API_URL }}
+          ZGUARD_MONITOR_WEB_URL: ${{ vars.ZGUARD_MONITOR_WEB_URL }}
+          PERM_MONITOR_URL: ${{ vars.PERM_MONITOR_URL || 'https://perm-iota.vercel.app' }}
+          ZGUARD_MONITOR_MIN_SWAPS: ${{ vars.ZGUARD_MONITOR_MIN_SWAPS }}
+          PERM_ZGUARD_API_KEY: ${{ secrets.PERM_ZGUARD_API_KEY }}
+          ZGUARD_ALERT_WEBHOOK_URL: ${{ secrets.ZGUARD_ALERT_WEBHOOK_URL }}
+        run: node scripts/monitor.mjs
