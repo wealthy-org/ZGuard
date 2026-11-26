@@ -618,6 +618,11 @@ Jalankan lewat Node/RPC publik atau Alchemy, lampirkan output di PR.
   Bukti testnet:
   - Safe `0xdf495CaeFa70b40B23A8FD1934CDa144ea3e3298`, dibuat lewat SafeProxyFactory pada tx `0xc0436051…f222e`: SafeL2 v1.5.0, owner `0x141D…86a8`/`0x1FBa…f0d9`/`0x3d2f…e3Bf`, threshold 2, tanpa module/guard.
   - `execTransaction` tx `0x3a6fef78ef99e0ee5152f031f7df4091bd71c4e55b7ffa3881a00dcda2e375eb` (blok 158036076): 2 tanda tangan (130 byte), pengirim `0x3d2f…`, 0.0005 ETH ke `0x141D…`. Event `ExecutionSuccess` cocok dengan safeTxHash `0x380adfb1…0fe04`, dihitung ulang sendiri via EIP-712 (chainId 46630). Nonce 0 → 1.
+  Bukti mainnet:
+  - **Safe mainnet** `0xad5501954A52792280D868F7e613Efcc4F80fa6c` (SafeL2 1.5.0), dibuat lewat tx `0x5fbce12d…c2c6`. Threshold 2; owner dari 3 seed terpisah: `0x1FBa…f0d9` (seed lama), `0xE36D…2CFc` (MetaMask Mobile, seed baru), `0xCf53…4Eba` (browser lain, seed baru). Tanpa module/guard.
+  - **Alamat sama di testnet:** calldata pembuatan yang sama dikirim ulang ke SafeProxyFactory testnet (tx `0x5672cc7f…8a3f`) → owner/threshold identik. Ini perlu karena satu `ZGUARD_X402_PAY_TO` melayani 46630 dan 4663.
+  - **Treasury Perm → Safe:** `setTreasury` tx `0xd47a880d…9ba9`, event `TreasuryChanged(0x3d2f…→0xad55…)`, `treasury()` = Safe. Fee lama tetap bisa di-claim treasury sebelumnya.
+  - **payTo ZGuard → Safe** (env Vercel + redeploy): `/v1/config` `payTo` = `0xad55…fa6c`; 402 `/v1/verify` dan `/v1/guard` → `accepts[].payTo` = Safe; monitor `api_payment` ✅.
 - [x] Monitoring: RPC, Neon, kegagalan prover, alert saldo relayer. (kegagalan prover menunggu SP1)
   Status: `/health` (sequencer, storage) dan `/v1/metrics` (latensi, 5xx) tersedia sebagai sumber; alerting eksternal belum dipasang (butuh layanan monitoring user).
   **Update 2026-11-26: monitor terjadwal aktif ✅** (secret `PERM_ZGUARD_API_KEY` dipasang user; run manual GitHub Actions "Production monitor" #1 hijau 5/5: api_health chain 46630 · neon-postgres · block age 1s; api_payment payTo 0x141D…86a8 · deposit; web_home 200; perm_gate enforce · ready · eip155:4663; perm_credit 0.145000 USDG ≈ 9 swaps). Detail: `.github/workflows/monitor.yml` menjalankan `scripts/monitor.mjs` tiap 15 menit. Run yang gagal jadi merah dan GitHub mengirim email; opsional webhook Discord/Slack. Yang dicek:
