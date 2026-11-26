@@ -99,6 +99,24 @@ export function guardOffline(req: GuardRequest): GuardResponse {
   };
 }
 
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+
+/**
+ * SDK-1: a bearer API key is spendable credit; never send it in cleartext. Plain http is only allowed to
+ * loopback (local dev). Inside guard() this error becomes a fail-closed abstain.
+ */
+export function assertKeySafeTransport(baseUrl: string): void {
+  let u: URL;
+  try {
+    u = new URL(baseUrl);
+  } catch {
+    throw new Error(`Invalid ZGuard API URL: ${baseUrl}`);
+  }
+  if (u.protocol === "https:") return;
+  if (u.protocol === "http:" && (LOOPBACK_HOSTS.has(u.hostname) || u.hostname.endsWith(".localhost"))) return;
+  throw new Error(`Refusing to send the ZGuard API key over ${u.protocol}//${u.hostname}; use https`);
+}
+
 /**
  * ZGuard Hosted API client with fail-closed behavior and x402 payment loop (§4.3, §5, §8.1).
  */
@@ -143,6 +161,7 @@ export class ZGuardClient {
       headers["X-PAYMENT"] = paymentHeader;
     }
 
+    if (this.apiKey) assertKeySafeTransport(this.baseUrl);
     const res = await this.fetchFn(`${this.baseUrl}${path}`, {
       method,
       headers,
