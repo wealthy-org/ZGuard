@@ -59,7 +59,7 @@ Perintah mengulang: `pnpm install && pnpm --filter @zguard/sdk build && pnpm --f
 | C5 | `/v1/register` tanpa rate limit, tiap akun dapat kredit gratis | 🟠 Sedang-tinggi | dari kode | ✅ diperbaiki |
 | C6 | Test: 6 dari 11 gagal; tidak ada CI | 🟠 Sedang | dijalankan | ✅ diperbaiki (script + CI) |
 | C7 | Default testnet 46630; brief minta mainnet 4663 | 🟠 Sedang | dari kode/README | ⏸ ditunda sesuai keputusan head dev (Bagian L) |
-| C8 | Perm dan terminal hanya helper SDK, bukan integrasi default-on | 🟠 Sedang | dari kode | 🟡 **Perm: terintegrasi default-on fail-closed** (repo `wealthy-org/Perm`, 5 commit, belum di-push/deploy); terminal: repo belum ada |
+| C8 | Perm dan terminal hanya helper SDK, bukan integrasi default-on | 🟠 Sedang | dari kode | 🟡 **Perm: ✅ default-on fail-closed, lulus live di mainnet** (tx `0x88ee…49f2`); terminal: repo belum ada |
 | C9 | README klaim ✅ melebihi bukti | 🟡 Proses | dibandingkan | ✅ diperbaiki (README + teks web) |
 | D3 | Connect Wallet tidak terlihat setelah Open Console (UX) | 🟠 Sedang | screenshot + kode | ✅ diperbaiki di kode; uji wallet asli belum |
 
@@ -273,7 +273,12 @@ Biaya penyalahgunaan terbatas; pendapatan sesuai pemakaian.
 > - Fixture dengan tanda tangan quote palsu → `deny S-REVERT`.
 > - Target selain Router / calldata `approve` → 400.
 > **Temuan:** token fixture Perm yang owner-mintable (NVDA·T, AAPL·T, SPCX·T, OPENAI·T, ANTHROPIC·T) → `deny T-MINT`; token saham RH testnet (TSLA, AMZN, PLTR, NFLX) → token risk `allow`. Tidak ada bypass.
-> **Sisa:** push + env Vercel Perm + 1 swap nyata ETH→TSLA di Perm staging (wallet allowlisted) untuk bukti jalur `allow` live; approve/Permit2 belum di-gate (jumlah persis ke Router/Permit2 resmi); repo terminal belum ada.
+> **✅ Lulus live 2026-11-26 (mainnet 4663, keputusan user: swap sangat kecil).** Perm `perm-iota.vercel.app` (env `PERM_ZGUARD_API_KEY` terpasang, banner "ZGuard on") → swap 0.00002 ETH → NVDA.
+> - Tx `0x88eeccb938fa5c8472ce610d186ed3624c2fbcdbfc54ce84a707e478acf049f2`, blok 123436315, status success, fee 0.00000817943091 ETH.
+> - `SwapSettled` dari Router resmi `0x155b…2Ea2`: account = recipient `0x141D…86a8`, amountIn 0.00002 ETH, amountOut 0.000221787732663172 NVDA (`0xd060…9EEC`), quoteId `0x2822…7e9f`.
+> - Gate hanya memanggil wallet setelah verdict `allow` yang hash-nya cocok, jadi tx yang settle membuktikan jalur `allow` live: Perm → `/api/zguard` → ZGuard `/v1/guard` (eip155:4663) → wallet.
+> **Temuan [C8-7702]:** wallet user adalah smart account MetaMask EIP-7702 (EOA code `0xef0100…63c0…e32b`). Tx dikirim ke DelegationManager `0xdb9b…47db3` (`redeemDelegations`, selector `0xcef6d209`), yang memanggil `swapExactInput` Router (selector muncul tepat 1×). Verdict ZGuard mencakup panggilan Router di dalamnya, bukan wrapper atau caveat yang ditambahkan wallet. Wallet milik user sendiri, jadi risikonya diterima; dicatat sebagai batas cakupan.
+> **Sisa:** approve/Permit2 belum di-gate (jumlah persis ke Router/Permit2 resmi); repo terminal belum ada.
 
 **Masalahnya apa**
 `createPermRouterGuard` dan `createTerminalSwapGuard` (`packages/sdk/src/integrations.ts`, 201 baris) adalah helper yang harus dipanggil pihak lain. Tidak ada kode Perm atau terminal di repo, tidak ada PR ke repo mereka, dan tidak ada tes bahwa mematikan guard menolak signer (§9.5).
@@ -605,6 +610,14 @@ Jalankan lewat Node/RPC publik atau Alchemy, lampirkan output di PR.
 - [ ] 🟡 **timelock + two-step ownership ada di kontrak; multisig dan verifikasi Blockscout setelah deploy.** Multisig + timelock untuk owner verifier sebelum mainnet; verifikasi source di Blockscout.
 - [ ] 🟡 Monitoring: RPC, Neon, kegagalan prover, alert saldo relayer.
   Status: `/health` (sequencer, storage) dan `/v1/metrics` (latensi, 5xx) tersedia sebagai sumber; alerting eksternal belum dipasang (butuh layanan monitoring user).
+  **Update 2026-11-26: monitor terjadwal dibuat (kode ✅, aktivasi menunggu secret dari user).** `.github/workflows/monitor.yml` menjalankan `scripts/monitor.mjs` tiap 15 menit. Run yang gagal jadi merah dan GitHub mengirim email; opsional webhook Discord/Slack. Yang dicek:
+  - `api_health`: `/health` 200, sequencer up, umur blok ≤ 300 dtk (memakai RPC + Neon).
+  - `api_payment`: `payTo` valid, tidak ada settlement error.
+  - `web_home`.
+  - `perm_gate`: Perm `/api/zguard` `enforce` + `ready`; `off` = alert UNGUARDED.
+  - `perm_credit`: kredit key Perm ≥ 5 panggilan guard. Karena gate fail-closed di mainnet, kredit habis berarti swap Perm berhenti.
+  Bukti: `scripts/monitor.test.mjs` · `node --test scripts/monitor.test.mjs` · 7/7. Live dari sandbox: 4 cek ✅. Dengan key gratis (0,06 USDG) `perm_credit` ❌ "≈ 4 swaps left" → exit 1, dan webhook lokal menerima alert.
+  Belum: alert kegagalan prover (ZK ditunda); saldo relayer tidak relevan (mode deposit, tanpa relayer).
 - [ ] ⛔ Audit pihak ketiga sebelum mainnet. (keputusan bisnis, di luar repo)
 - [x] Hapus `__MACOSX/` dari git dan tambah ke `.gitignore`; hapus salinan brief `dev-brief-zguard.md` di repo (satu sumber kebenaran).
   Bukti: commit `a82c9de` (`__MACOSX/`, `._*` di `.gitignore`; salinan brief dan lockfile npm liar dihapus)
