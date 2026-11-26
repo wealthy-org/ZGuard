@@ -196,7 +196,7 @@ const DIST = [
   {
     title: 'RHC / pons terminal',
     icon: TerminalSquare,
-    points: ['Guard fires before approve, swap and launch-buy', 'Verdict renders inline in the trade panel', 'Deny blocks the signature path, visibly'],
+    points: ['zguard-terminal guards every approve, buy and sell', 'Verdict is printed before the wallet signs', 'Deny, abstain or no ZGuard: nothing is signed'],
   },
   {
     title: 'MCP for agents',

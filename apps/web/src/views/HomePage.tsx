@@ -671,9 +671,9 @@ const SURFACES: { title: string; icon: LucideIcon; desc: string; lines: { text: 
   {
     title: 'RHC / pons terminal',
     icon: TerminalSquare,
-    desc: 'SDK helper createTerminalSwapGuard runs before every approve, swap or launch-buy; a deny blocks the signature path. Terminal integration pending.',
+    desc: 'zguard-terminal runs createTerminalSwapGuard before every approve, buy or sell on a pons curve. Only an allow bound to the exact bytes is signed; switching the guard off makes it refuse.',
     lines: [
-      { text: 'terminal.swap(quote)', kind: 'cmd' },
+      { text: 'zguard-terminal buy <token> 0.01', kind: 'cmd' },
       { text: 'guard → token_risk: other', kind: 'out' },
       { text: 'decision: deny · T-MINT', kind: 'ok' },
       { text: 'signature refused', kind: 'out' },

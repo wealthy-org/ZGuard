@@ -654,9 +654,9 @@ offchain · dev only, refused when NODE_ENV=production`}
                   'TypeScript SDK: offline quote-match + API client + EVM signer wrapper for USDG/x402 and routine RHC txs.',
                   'One MCP server with the five tools, working in Claude Code and Cursor at minimum (OpenClaw once the host is verified).',
                   'Three checks in POST /v1/guard on chain 4663; asset awareness for USDG, WETH, registry Stock Tokens, pons V1/V2 curve and graduated v4 pools, PoolManager v4.',
-                  'Default-on in Perm and the RHC/pons terminal: no guard call, no signature — disabling it in dev must fail visibly, never silently. Status today: SDK helpers + tests (enabled:false throws GuardDisabledError); repo integrations pending.',
+                  'Default-on in Perm and the RHC/pons terminal: no guard call, no signature — disabling it in dev must fail visibly, never silently. Status today: Perm runs a mandatory fail-closed gate (live on 4663); the local zguard-terminal guards every approve/buy/sell and has no unguarded mode.',
                   'x402 billing in USDG on RHC; receipt/dashboard page (balance, decision log, payload hashes) — not a social product.',
-                  'zk layer: Groth16 (required) and Halo2-KZG (target), verifier on 4663, async attestation.zk. Status today: SP1 guest scaffold, verifier not deployed, attestations pending.',
+                  'zk layer: Groth16 (required) and Halo2-KZG (target), verifier on 4663, async attestation.zk. Status today: SP1 guest built in CI with its programVKey pinned; no proof yet, verifier not deployed, attestations pending.',
                 ].map((t) => (
                   <li key={t} className="flex gap-3 text-[13px] text-zinc-300">
                     <Check className="mt-1 h-3.5 w-3.5 shrink-0 text-white" strokeWidth={2.5} />
