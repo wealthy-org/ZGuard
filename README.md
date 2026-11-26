@@ -39,6 +39,7 @@ or the guard is disabled (`GuardDisabledError`).
 | Rate limits, admin-only revenue, CORS allow-list, p50/p95/p99 metrics | Implemented | `offline.test.ts` |
 | Perm guard (`createPermRouterGuard`) | Wired into Perm as a mandatory, fail-closed gate (live on 4663) | `c8-integrations.test.ts`, Perm `test-zguard-gate.ts` |
 | Local trading terminal `zguard-terminal` (`packages/terminal`) | pons curve quote/buy/sell with exact approvals; every signature goes through `createTerminalSwapGuard`, and there is no unguarded mode | `terminal.test.ts` |
+| $ZGUARD token launch + buyback-and-burn (`packages/terminal/src/token.ts`) | Safe Transaction Builder batches, dry-run against the chain; buyback only behind a ZGuard `allow`. **Prepared, not launched** | `token-launch.test.ts` |
 | MCP server (5 tools) | Implemented in `packages/mcp`; **not published to npm** (run from the repo) | live acceptance §9.6 |
 | ZK verifier contract `ZGuardQuoteVerifier.sol` | Accepts only SP1 gateway proofs. Config changes go through a 2-day timelock; ownership transfer is two-step. **Not deployed** | `forge test` (7 tests; fake proofs revert) |
 | ZK rule engine `packages/zk/quote-rules` | Rust `no_std`. Its public values are byte-identical to the TypeScript SDK | `cargo test` (5 tests) |
@@ -48,7 +49,8 @@ or the guard is disabled (`GuardDisabledError`).
 | Browser wallet in the web app | Connect uses `eth_requestAccounts` + `wallet_switchEthereumChain` only; nothing is signed on connect | `apps/web/test/wallet.test.ts` |
 
 Phase 2 (not built): Base/Solana settlement relayers, `/v1/watch` webhooks, signed metadata badges,
-own holder indexer, LLM text scanner, automatic buyback/burn, and shielded payments.
+own holder indexer, LLM text scanner, automatic (unattended) buyback/burn and the Uniswap v4 buyback route after
+graduation, and shielded payments. The $ZGUARD launch and Safe-signed buyback-and-burn batches are prepared (see below).
 
 ## Monorepo
 
@@ -141,6 +143,43 @@ node packages/terminal/dist/cli.js sell 0x9118BD806cB3906Dc6d50a4409a9e9dF481723
 - `sell` first sends an exact approval (only the amount being sold, only to the token's own curve).
 - `--network 4663` switches to mainnet.
 - `--slippage-bps` must be between 1 and 2000.
+
+## $ZGUARD token: launch and buyback-and-burn (prepared, not launched)
+
+The product token follows the brief: it launches on pons, and net hosted-API revenue buys it back and burns it to
+`0x…dEaD`. The ZGuard Ops Safe (`0xad55…fa6c`, 2-of-3) is the launcher, the token `deployer`, the creator-fee
+recipient and the buyback wallet. No EOA owns anything.
+
+The `token-*` commands never sign. They read the chain, dry-run the exact call from the Safe with `eth_call`, and
+write a Safe Transaction Builder batch for the owners to import and sign.
+
+```bash
+node packages/terminal/dist/cli.js token-launch-plan --network 4663     # pons V2 launchToken, fee 0.0005 ETH from the Safe
+node packages/terminal/dist/cli.js token-launch-plan --network 46630    # testnet launchpad rehearsal (ipfs:// metadata)
+node packages/terminal/dist/cli.js token-metadata --write zguard-46630.json   # testnet metadata to pin (CIDv1, raw leaves)
+export ZGUARD_PONS_TOKEN_ADDRESS=0x…  ZGUARD_API_KEY=zg_live_…
+node packages/terminal/dist/cli.js token-status --network 4663          # deployer + fee recipient = Safe, burned supply
+node packages/terminal/dist/cli.js token-buyback-plan 0.01 --network 4663
+```
+
+**Launch (4663):**
+- `PonsV2LaunchFactory.launchToken`, ABI from Sourcify.
+- Name `ZGuard`, symbol `ZGUARD`, logo `/logo.jpg`.
+- Creator tax 0 bps by default (`ZGUARD_TOKEN_CREATOR_TAX_BPS`).
+- pons-native `buybackEnabled = false`, because ZGuard runs its own buyback (brief §10).
+- `expectedEconomics` is read from `previewLaunchEconomics`. The salt is deterministic per chain and Safe.
+
+**Buyback (4663 only):**
+- One call: `curve.buy(quoteIn, minTokensOut, 0x…dEaD)`. The tokens never reach the Safe.
+- The batch is written only after the local quote-match passes and `POST /v1/guard` returns an unexpired `allow`
+  bound to those bytes. Deny, abstain, an unreachable API, no key or `ZGUARD_TERMINAL_MODE=off` produce no file.
+- It is refused for a graduated token (the Uniswap v4 route is Phase 2), during the snipe-tax window, and on testnet.
+  Testnet curves have no `recipient` and keep transfers locked.
+- The Safe needs ETH: revenue arrives in USDG, and the USDG → ETH swap is a separate step.
+
+**After the launch:**
+1. Set `ZGUARD_PONS_TOKEN_ADDRESS` in the Vercel API.
+2. `apps/api/scripts/buyback-report.ts` then traces every buy and burn tx.
 
 ## SDK example
 
