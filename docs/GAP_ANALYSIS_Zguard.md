@@ -279,6 +279,11 @@ Biaya penyalahgunaan terbatas; pendapatan sesuai pemakaian.
 > - Gate hanya memanggil wallet setelah verdict `allow` yang hash-nya cocok, jadi tx yang settle membuktikan jalur `allow` live: Perm → `/api/zguard` → ZGuard `/v1/guard` (eip155:4663) → wallet.
 > **Temuan [C8-7702]:** wallet user adalah smart account MetaMask EIP-7702 (EOA code `0xef0100…63c0…e32b`). Tx dikirim ke DelegationManager `0xdb9b…47db3` (`redeemDelegations`, selector `0xcef6d209`), yang memanggil `swapExactInput` Router (selector muncul tepat 1×). Verdict ZGuard mencakup panggilan Router di dalamnya, bukan wrapper atau caveat yang ditambahkan wallet. Wallet milik user sendiri, jadi risikonya diterima; dicatat sebagai batas cakupan.
 > **Sisa:** approve/Permit2 belum di-gate (jumlah persis ke Router/Permit2 resmi); repo terminal belum ada.
+> **Update 2026-11-26: approve/Permit2 di-gate ✅ (kode + test, belum uji live).** Perm `lib/web3/approval-gate.ts`, dipakai `components/TradeApp.tsx`; selalu aktif (tidak ikut `PERM_ZGUARD_MODE=off`, tanpa kredit ZGuard).
+> - `approve`: spender hanya PermRouter/Permit2 resmi (mainnet wajib = manifest), jumlah persis input quote (≤ uint160, tidak unlimited), chain dipin, value 0; calldata di-decode ulang dan byte itu yang dikirim (`sendTransaction`).
+> - Permit2 `PermitTransferFrom`: domain Permit2 resmi, spender PermRouter, jumlah persis, deadline ≤ 15 menit, nonce acak ≠ 0, typed data dibekukan; signature wajib recover ke akun (akun kontrak/7702 lewat `verifyTypedData` onchain).
+> Bukti: `scripts/test-approval-gate.ts` (Perm) · `pnpm test:approval` + `server:test` · lulus; 8/9 mutant dibunuh (cek spender builder sengaja dobel) · `eslint .`, `tsc`, `next build`, `audit:bundle` lulus · commit Perm `ecb8862`, `0af7eaf`, `5b064e8`.
+> Sisa: uji live satu swap ERC-20 (approve atau Permit2) di mainnet; repo terminal belum ada.
 
 **Masalahnya apa**
 `createPermRouterGuard` dan `createTerminalSwapGuard` (`packages/sdk/src/integrations.ts`, 201 baris) adalah helper yang harus dipanggil pihak lain. Tidak ada kode Perm atau terminal di repo, tidak ada PR ke repo mereka, dan tidak ada tes bahwa mematikan guard menolak signer (§9.5).
