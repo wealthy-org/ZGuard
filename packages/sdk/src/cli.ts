@@ -76,7 +76,9 @@ async function main(): Promise<void> {
     const network = extra || process.env.ZGUARD_NETWORK || NETWORK_RHC_TESTNET;
     const out = await client.tokenRisk(arg, network);
     console.log(JSON.stringify(out, null, 2));
-    return;
+    // CLI-1: exit status follows the verdict like `verify`/`guard`, so `zguard token-risk X && buy` can
+    // never proceed on deny/abstain.
+    process.exit(out.decision === "allow" ? 0 : 1);
   }
 
   printHelp();
