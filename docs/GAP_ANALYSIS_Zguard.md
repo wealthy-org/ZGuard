@@ -59,7 +59,7 @@ Perintah mengulang: `pnpm install && pnpm --filter @zguard/sdk build && pnpm --f
 | C5 | `/v1/register` tanpa rate limit, tiap akun dapat kredit gratis | 🟠 Sedang-tinggi | dari kode | ✅ diperbaiki |
 | C6 | Test: 6 dari 11 gagal; tidak ada CI | 🟠 Sedang | dijalankan | ✅ diperbaiki (script + CI) |
 | C7 | Default testnet 46630; brief minta mainnet 4663 | 🟠 Sedang | dari kode/README | ⏸ ditunda sesuai keputusan head dev (Bagian L) |
-| C8 | Perm dan terminal hanya helper SDK, bukan integrasi default-on | 🟠 Sedang | dari kode | 🟡 helper diperbaiki + test guard-off; integrasi butuh repo Perm/terminal |
+| C8 | Perm dan terminal hanya helper SDK, bukan integrasi default-on | 🟠 Sedang | dari kode | 🟡 **Perm: terintegrasi default-on fail-closed** (repo `wealthy-org/Perm`, 5 commit, belum di-push/deploy); terminal: repo belum ada |
 | C9 | README klaim ✅ melebihi bukti | 🟡 Proses | dibandingkan | ✅ diperbaiki (README + teks web) |
 | D3 | Connect Wallet tidak terlihat setelah Open Console (UX) | 🟠 Sedang | screenshot + kode | ✅ diperbaiki di kode; uji wallet asli belum |
 
@@ -76,7 +76,7 @@ Legenda: ✅ sesuai · 🟡 sebagian · ❌ belum ada · ⚠️ melanggar · ⚪
 | Chain utama RHC 4663 | 🟡 | Kode mendukung keduanya, default testnet (C7) |
 | SDK + CLI + MCP + API + wrapper signer | ✅ | Semua paket ada dan kompilasi |
 | Billing x402 USDG | 🟡 | Kode settlement ada; belum terbukti dengan tx nyata dari mesin ini |
-| Default-on di Perm dan terminal | 🟡 | Hanya `createPermRouterGuard` / `createTerminalSwapGuard` di SDK (C8) |
+| Default-on di Perm dan terminal | 🟡 | Perm: gate default-on di `/trade` (C8, 2026-11-26). Terminal: menunggu repo |
 | Lapisan zk Groth16 (wajib) + Halo2 (target) | ⚠️ | Klaim ✅ di README, kenyataan di C1 dan C2 |
 
 ## A2. Quote-match (§6.1)
@@ -259,6 +259,21 @@ Biaya penyalahgunaan terbatas; pendapatan sesuai pemakaian.
 ## C8. Perm dan terminal bukan integrasi nyata 🟠 · *dari kode*
 > **Status: 🟡 helper diperbaiki dan dites; integrasi nyata butuh repo Perm/terminal.** Ditemukan dan diperbaiki bug: helper meng-hash payload `type:"evm_tx"` sedangkan signer memverifikasi `type:"intent"`, sehingga `payload_hash` tidak pernah cocok dan helper tidak pernah bisa menandatangani. Web/README sekarang menyebut ini "SDK helper", bukan default-on.
 > Bukti: `packages/sdk/src/integrations.ts` + `apps/api/test/c8-integrations.test.ts` · 5/5 lulus (`enabled:false` → `GuardDisabledError` dengan 0 panggilan wallet; deny/abstain → 0 panggilan; allow → tepat 1 `sendTransaction`) · commit `0d6f9b8`, `6a90158`
+
+> **Update 2026-11-26: integrasi Perm selesai di kode (fail-closed, keputusan user).** Repo `github.com/wealthy-org/Perm`, commit `0764b4e` `36070dd` `6ea4ec2` `d6332ac` `91ad4bd` (belum di-push).
+> - Browser meng-encode `swapExactInput` dan mengirim hanya byte tx ke `POST /api/zguard`. Server membangun ulang request ZGuard (`lib/zguard/request.ts`), mengunci ke Router resmi + chain + fungsi `swapExactInput`, lalu meneruskan ke `/v1/guard` memakai key server (`PERM_ZGUARD_API_KEY`).
+> - Browser memanggil wallet hanya jika keputusan `allow`, `payload_hash` = hash lokal, dan verdict belum kedaluwarsa. Byte yang dikirim ke wallet = byte yang diperiksa (`wallet.sendTransaction`).
+> - §9.5: hanya `PERM_ZGUARD_MODE=off` (persis) yang mematikan gate, dan halaman lalu menampilkan banner merah **UNGUARDED**. Key kosong, ZGuard down, kredit habis, `deny`/`abstain`/mismatch/expired → tombol Swap nonaktif dan 0 panggilan wallet.
+> Bukti: `scripts/test-zguard-gate.ts` (Perm) · `pnpm test:zguard` · lulus.
+> - Hash vector = `computePayloadHash` SDK ZGuard (`0xc4ec…feae`).
+> - 8 jalur blokir → 0 wallet send; config hanya `off` persis; 2 mutant dibunuh.
+> - `pnpm server:test`, `eslint .`, `tsc`, `next build`, `audit:bundle` lulus.
+> Bukti live lokal: Perm `next dev` → `/api/zguard` → API ZGuard → RHC 46630.
+> - `payload_hash` dari API = hash browser; quote-match ZGuard meng-encode ulang calldata Perm byte-per-byte (`allow`).
+> - Fixture dengan tanda tangan quote palsu → `deny S-REVERT`.
+> - Target selain Router / calldata `approve` → 400.
+> **Temuan:** token fixture Perm yang owner-mintable (NVDA·T, AAPL·T, SPCX·T, OPENAI·T, ANTHROPIC·T) → `deny T-MINT`; token saham RH testnet (TSLA, AMZN, PLTR, NFLX) → token risk `allow`. Tidak ada bypass.
+> **Sisa:** push + env Vercel Perm + 1 swap nyata ETH→TSLA di Perm staging (wallet allowlisted) untuk bukti jalur `allow` live; approve/Permit2 belum di-gate (jumlah persis ke Router/Permit2 resmi); repo terminal belum ada.
 
 **Masalahnya apa**
 `createPermRouterGuard` dan `createTerminalSwapGuard` (`packages/sdk/src/integrations.ts`, 201 baris) adalah helper yang harus dipanggil pihak lain. Tidak ada kode Perm atau terminal di repo, tidak ada PR ke repo mereka, dan tidak ada tes bahwa mematikan guard menolak signer (§9.5).
@@ -531,12 +546,13 @@ Sesuai brief §8.3: jika belum selesai, rilis dengan Groth16 saja dan marketing 
 
 ## I4. Kepatuhan brief yang belum ada bukti
 - [ ] ⏸ **DITUNDA (mainnet, setelah testnet hijau)** §9.1 dump JSON `/v1/guard` di **mainnet 4663** untuk swap USDG atau Stock Token.
-- [ ] 🟡 **sebagian (2026-11-26).** §9.3 satu swap Uniswap v4 ber-hook Pons dan satu trade curve Pons: `balanceChanges` cocok dengan saldo onchain setelah tx uji (wallet dev). Tx revert → `S-REVERT`.
+- [x] ✅ **selesai (2026-11-26).** §9.3 satu swap Uniswap v4 ber-hook Pons dan satu trade curve Pons: `balanceChanges` cocok dengan saldo onchain setelah tx uji (wallet dev). Tx revert → `S-REVERT`.
   Bukti: `apps/api/scripts/check-sim-vs-chain.ts` (replay tx yang sudah mined lewat `simulateOnRhc` di state blok parent, bandingkan dengan log `Transfer` + selisih saldo ETH onchain) · `tsx scripts/check-sim-vs-chain.ts <txHash>` ·
   - ✅ swap **graduated Pons v4** (FOLDY, `kind=pons_graduated_v4`, lewat PoolManager `0x8366…0951`) tx `0xfd5b718e…e894` → **MATCH 6/6** (token + ETH semua alamat, termasuk penerima fee)
   - ✅ **tx revert** (`createLaunch` gagal) tx `0xc1b985eb…e9e1` → simulasi `revert`, `deny S-REVERT` → MATCH
   - ✅ curve non-Pons (TOAST, `kind=other`) 3 tx → MATCH 4/4 masing-masing
-  - ⏳ **trade curve Pons** (`kind=pons_curve`): belum ada tx baru dalam jendela state RPC; menunggu satu trade kecil oleh user (RPC publik hanya menyimpan state ±20 menit, cek harus dijalankan segera setelah tx)
+  - ✅ **trade curve Pons** (KOIP `0x9118…2365`, `kind=pons_curve`, curve `0x7206…F3A5`, `buy(uint256,uint256)` 0.0005 ETH oleh Akun B) tx `0xc00a6ed0a59b9c5e0d0d383f8112f8ce2bff6a5a603532009e9355643e1bdc73` → **MATCH 4/4** (prediksi 195407.229764919120663678 KOIP = onchain; ETH −0.0005 pembeli / +0.0005 curve)
+  - Catatan: RPC publik testnet hanya menyimpan state ±20 menit, jadi script harus dijalankan segera setelah tx.
 - [ ] 🟡 **test guard-off selesai di SDK; integrasi butuh akses repo Perm/terminal.** §9.5 integrasi nyata di Perm dan terminal; test "guard dimatikan → signer menolak / UI hard-fail". Butuh akses repo Perm dan terminal.
   Bukti (bagian SDK): `apps/api/test/c8-integrations.test.ts` 5/5 · commit `0d6f9b8`
 - [ ] 🟡 **402 terbukti lokal; bayar nyata butuh wallet/relayer.** §9.7 tx x402 USDG sukses di chain nyata dan 402 saat kredit habis (dengan relayer sungguhan, bukan simulasi).
