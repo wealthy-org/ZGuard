@@ -18,7 +18,13 @@ import {
   type GuardResponse,
   getEip712DomainStatus,
 } from "@zguard/sdk";
-import { buildInitialZkAttestation, buildSp1GuestInput, proveQuoteAttestationAsync } from "@zguard/zk";
+import {
+  buildInitialZkAttestation,
+  buildSp1GuestInput,
+  getProgramVKey,
+  isPlaceholderProgramVKey,
+  proveQuoteAttestationAsync,
+} from "@zguard/zk";
 import { loadConfig, type ZGuardAppConfig } from "./config.js";
 import {
   StorageUnavailableError,
@@ -407,7 +413,11 @@ export function createZGuardApp(deps: AppDependencies = {}): {
         scope: "quote",
         verifierAddress: config.zkVerifierAddress,
         sp1ProverConfigured: Boolean(config.zkSp1ProverUrl),
-        programVKeyIsPlaceholder: !config.zkProgramVKey,
+        programVKey: getProgramVKey(config.zkSystem, config.zkProgramVKey),
+        programVKeyIsPlaceholder: isPlaceholderProgramVKey(
+          config.zkSystem,
+          getProgramVKey(config.zkSystem, config.zkProgramVKey)
+        ),
         onchainBroadcastEnabled: Boolean(
           config.zkVerifierAddress && config.zkVerifierPrivateKey
         ),
