@@ -22,3 +22,4 @@ packages/zk/contracts/lib/
 .data/
 apps/api/.data/
 packages/zk/**/target/
+packages/zk/artifacts-ci/

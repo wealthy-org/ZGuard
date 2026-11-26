@@ -1,0 +1,124 @@
+name: SP1 guest
+
+# Gap H2 / H3 (free path, no prover network): build the quote guest with the Succinct toolchain,
+# print its programVKey and execute the real ELF in the zkVM for every shared TypeScript fixture.
+# Groth16 proofs (H4) need the Succinct prover network and are NOT part of this workflow.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/zk/**"
+      - ".github/workflows/sp1.yml"
+  pull_request:
+    paths:
+      - "packages/zk/**"
+      - ".github/workflows/sp1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sp1-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SP1_VERSION: v6.10.0
+  SP1_PROVER: cpu
+  CARGO_TERM_COLOR: always
+
+jobs:
+  sp1:
+    name: cargo prove build · programVKey · zkVM parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install protoc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            packages/zk/sp1-host
+            packages/zk/sp1-quote-guest
+
+      - name: Install SP1 toolchain (${{ env.SP1_VERSION }})
+        run: |
+          curl -L https://sp1.succinct.xyz | bash
+          ~/.sp1/bin/sp1up -v "$SP1_VERSION"
+          echo "$HOME/.sp1/bin" >> "$GITHUB_PATH"
+
+      - name: Toolchain versions
+        run: |
+          cargo prove --version
+          rustc --version
+
+      - name: Native rules test against the shared fixtures
+        working-directory: packages/zk/quote-rules
+        run: cargo test
+
+      - name: cargo prove build (guest)
+        working-directory: packages/zk/sp1-quote-guest
+        run: cargo prove build
+
+      - name: programVKey
+        id: vkey
+        working-directory: packages/zk/sp1-host
+        run: |
+          cargo run --release --bin vkey | tee vkey.out
+          VKEY=$(grep -Eo '0x[0-9a-fA-F]{64}' vkey.out | tail -1)
+          test -n "$VKEY" || { echo "::error::vkey binary printed no bytes32"; exit 1; }
+          ELF=$(find .. -path '*elf-compilation*' -type f -name zguard-sp1-quote-guest | head -1)
+          test -n "$ELF" || { echo "::error::guest ELF not found"; exit 1; }
+          ELF_SHA=$(sha256sum "$ELF" | cut -d' ' -f1)
+          mkdir -p ../artifacts-ci
+          cp "$ELF" ../artifacts-ci/zguard-sp1-quote-guest.elf
+          printf '{\n  "sp1Version": "%s",\n  "programVKey": "%s",\n  "elfSha256": "%s",\n  "commit": "%s"\n}\n' \
+            "$SP1_VERSION" "$VKEY" "$ELF_SHA" "$GITHUB_SHA" > ../artifacts-ci/sp1-quote-guest.json
+          cat ../artifacts-ci/sp1-quote-guest.json
+          echo "vkey=$VKEY" >> "$GITHUB_OUTPUT"
+          {
+            echo "### SP1 quote guest"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| SP1 | \`$SP1_VERSION\` |"
+            echo "| programVKey | \`$VKEY\` |"
+            echo "| ELF sha256 | \`$ELF_SHA\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Committed programVKey must match the build
+        working-directory: packages/zk
+        run: |
+          if [ -f artifacts/sp1-quote-guest.json ]; then
+            WANT=$(grep -Eo '0x[0-9a-fA-F]{64}' artifacts/sp1-quote-guest.json | head -1)
+            GOT="${{ steps.vkey.outputs.vkey }}"
+            if [ "$WANT" != "$GOT" ]; then
+              echo "::error::programVKey drift: committed $WANT, built $GOT. Update packages/zk/artifacts/sp1-quote-guest.json (and the verifier) on purpose."
+              exit 1
+            fi
+            echo "programVKey matches the committed artifact"
+          else
+            echo "::notice::packages/zk/artifacts/sp1-quote-guest.json not committed yet; commit the JSON printed above."
+          fi
+
+      - name: zkVM parity (real guest ELF vs TypeScript fixtures)
+        working-directory: packages/zk/sp1-host
+        run: |
+          cargo run --release --bin parity | tee parity.out
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat parity.out | grep -E '^(PASS|FAIL|[0-9]+ / [0-9]+)' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sp1-quote-guest
+          path: packages/zk/artifacts-ci/
