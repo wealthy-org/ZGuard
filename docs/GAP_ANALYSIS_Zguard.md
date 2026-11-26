@@ -53,7 +53,7 @@ Perintah mengulang: `pnpm install && pnpm --filter @zguard/sdk build && pnpm --f
 | # | Temuan singkat | Seberapa serius | Terbukti? | Status 2026-11-25 |
 |---|---|---|---|---|
 | C1 | Bukti zk Path B tidak membuktikan verdict (selalu lolos) | 🔴 Kritis | dari kode | ✅ diperbaiki (Path B dihapus, Foundry negatif) |
-| C2 | SP1 dan Halo2 hanya kerangka; prover, verifier Halo2, dan deploy verifier tidak ada | 🔴 Tinggi | dari kode + env kosong | 🟡 scaffold jujur + crate aturan teruji; build/proof/deploy butuh infra |
+| C2 | SP1 dan Halo2 hanya kerangka; prover, verifier Halo2, dan deploy verifier tidak ada | 🔴 Tinggi | dari kode + env kosong | 🟡 guest SP1 dibangun di CI + `programVKey` asli + paritas zkVM 7/7 (2026-11-27); proof Groth16/deploy verifier butuh prover network; Halo2 skeleton |
 | C3 | API live berputar 308, tidak bisa dipakai | 🔴 Tinggi | live (curl) | 🟡 kode diperbaiki (503 bukan loop); butuh env + redeploy Vercel |
 | C4 | Klien bisa membatasi `checks` lalu dapat `allow` tanpa simulasi/token risk | 🔴 Tinggi | dari kode | ✅ diperbaiki (test gagal di kode lama, lulus di kode baru) |
 | C5 | `/v1/register` tanpa rate limit, tiap akun dapat kredit gratis | 🟠 Sedang-tinggi | dari kode | ✅ diperbaiki |
@@ -145,7 +145,7 @@ Hapus klaim "Groth16"/"verified" untuk Path B. Pakai verifier SP1 gateway asli (
 Event "verified" hanya muncul kalau ada proof yang tidak bisa dipalsukan. Klaim di web dan README sesuai kenyataan.
 
 ## C2. SP1 dan Halo2 hanya kerangka; verifier tidak ter-deploy 🔴 · *dari kode + env*
-> **Status: 🟡 sebagian.** Bagian yang bisa dikerjakan tanpa infra sudah selesai: crate `packages/zk/quote-rules` (`no_std`, dipakai guest) dengan vektor lintas bahasa yang byte-identik dengan TS `encodeQuotePublicValues`; guest SP1 meng-commit komitmen yang sama; `buildSp1GuestInput` di `packages/zk/src/index.ts`; Halo2 diberi label skeleton dan dimatikan default (`ZGUARD_ZK_HALO2_ENABLED=false`); API mengembalikan `pending` + `note` jujur. **Belum:** `cargo prove build`, `programVKey`, proof Groth16, deploy verifier/gateway di 46630, dan `verifyTx`. Semuanya butuh toolchain SP1, prover network (`NETWORK_PRIVATE_KEY`) dan wallet deploy.
+> **Status: 🟡 sebagian.** Bagian yang bisa dikerjakan tanpa infra sudah selesai: crate `packages/zk/quote-rules` (`no_std`, dipakai guest) dengan vektor lintas bahasa yang byte-identik dengan TS `encodeQuotePublicValues`; guest SP1 meng-commit komitmen yang sama; `buildSp1GuestInput` di `packages/zk/src/index.ts`; Halo2 diberi label skeleton dan dimatikan default (`ZGUARD_ZK_HALO2_ENABLED=false`); API mengembalikan `pending` + `note` jujur. **Update 2026-11-27:** `cargo prove build` ✅ dan `programVKey` ✅ (lihat H2, run `45785975447`). **Belum:** proof Groth16, deploy verifier/gateway di 46630, dan `verifyTx`. Semuanya butuh toolchain SP1, prover network (`NETWORK_PRIVATE_KEY`) dan wallet deploy.
 > Bukti: `cd packages/zk/quote-rules && cargo test` · 5/5 lulus (vektor quoteHash `0x00cfe0ab…c86366`) · live: `POST /v1/verify` fixture allow/deny Q-001 → attestation `pending`, note "SP1 prover not configured…" · commit `375ff65`, `56e69cf`
 
 **Masalahnya apa**
@@ -462,7 +462,8 @@ User tiba di Console, langsung melihat Connect Wallet di atas, terhubung dalam s
 4. **Kriteria selesai:** tidak ada kode yang bisa mencatat "verified" tanpa proof SP1 asli. Tulis test negatif: memanggil verifier dengan `publicValues` bebas dan proof palsu harus **revert**.
 
 ## H2. Build guest dan ambil `programVKey`
-> **Status: 🟡 kode + CI siap (2026-11-27), menunggu run pertama workflow `SP1 guest`.** ~~⛔ belum (butuh toolchain SP1 `cargo prove`; tidak tersedia di sandbox kerja).~~ Jalur gratis (tanpa prover network): guest dinaikkan ke `sp1-zkvm 6.10.0` (lulus `cargo check` native), crate host `packages/zk/sp1-host` (`build.rs` = `sp1-build`; bin `vkey` mencetak `programVKey`; bin `parity` mengeksekusi ELF guest asli di zkVM untuk tiap fixture), lockfile guest + host dipin. Workflow `.github/workflows/sp1.yml`: `sp1up v6.10.0` → `cargo prove build` → `programVKey` + sha256 ELF di job summary + artifact → cek drift terhadap `packages/zk/artifacts/sp1-quote-guest.json` → parity. Commit `86a0b25`, `04620e3`, `2cd7c78`, `f04ec2d`. Langkah 3 (simpan vkey di repo) dikerjakan setelah run pertama.
+> **Status: ✅ selesai (2026-11-27, jalur gratis tanpa prover network).** ~~🟡 kode + CI siap, menunggu run pertama workflow `SP1 guest`.~~ ~~⛔ belum (butuh toolchain SP1 `cargo prove`; tidak tersedia di sandbox kerja).~~ Guest dinaikkan ke `sp1-zkvm 6.10.0`; crate host `packages/zk/sp1-host` (`build.rs` = `sp1-build`; bin `vkey`; bin `parity` mengeksekusi ELF guest asli di zkVM untuk tiap fixture); lockfile guest + host dipin. Workflow `.github/workflows/sp1.yml`: `sp1up v6.10.0` → `cargo prove build` → `programVKey` + sha256 ELF → cek drift terhadap artifact → parity.
+> Bukti: run Actions [`45785975447`](https://github.com/wealthy-org/ZGuard/actions/runs/45785975447) (commit `922e10c`) **success**, semua langkah hijau (native rules test, `cargo prove build`, vkey, drift check, zkVM parity, artifact `sp1-quote-guest` 64 KB), durasi 7m23s · `programVKey = 0x001708b1c5d41d1c9d92527acc9db4d1130aad045d7f34e44f740b19470f973c` · ELF sha256 `6c337940e245b96748d8f678427965870add1e0b24844d6d11f756f2b56b6957` · disimpan di `packages/zk/artifacts/sp1-quote-guest.json` dan `SP1_QUOTE_PROGRAM_VKEY` (`@zguard/zk`, default `getProgramVKey("groth16-sp1")`; `/v1/config` `zk.programVKey`, `programVKeyIsPlaceholder:false`); CI gagal bila build berikutnya menghasilkan vkey lain · commit `3d39e09`, `2ea4f59`, `02487c3`, `9f212ca` + commit pin vkey.
 
 1. Dari `packages/zk/sp1-quote-guest`: `cargo prove build`. Pin versi `sp1-zkvm` dan SDK ke versi yang sama dengan `cargo-prove` yang dipakai (`cargo prove --version`); catat di README.
 2. Buat crate host (misal `packages/zk/sp1-host`) yang memakai `sp1-sdk`: `ProverClient`, `setup(ELF)` → simpan `vk.bytes32()` sebagai `programVKey`.
@@ -470,7 +471,7 @@ User tiba di Console, langsung melihat Connect Wallet di atas, terhubung dalam s
 4. **Kriteria selesai:** `cargo prove build` lulus di CI; `programVKey` tercetak dan tersimpan.
 
 ## H3. Samakan input guest dengan SDK TypeScript
-> **Update 2026-11-27:** fixture bersama `packages/zk/fixtures/sp1-quote-fixtures.json` (7 kasus: allow; deny Q-001/Q-002/Q-005/Q-003; abstain Q-DECODE/Q-007) dibuat dari pipeline TS (`buildSp1QuoteFixtures`); paritas TS ↔ Rust native ✅ 7/7 byte-identik (`quote-rules` `cargo test` 6/6), test kesegaran fixture di suite offline (`sp1-fixtures.test.ts` 3/3); paritas TS ↔ ELF guest di zkVM = langkah `parity` workflow SP1.
+> **Update 2026-11-27: ✅ langkah 3 (paritas via execute) selesai.** Fixture bersama `packages/zk/fixtures/sp1-quote-fixtures.json` (7 kasus: allow; deny Q-001/Q-002/Q-005/Q-003; abstain Q-DECODE/Q-007) dibuat dari pipeline TS (`buildSp1QuoteFixtures`); paritas TS ↔ Rust native ✅ 7/7 byte-identik (`quote-rules` `cargo test` 6/6); **paritas TS ↔ ELF guest asli di zkVM ✅ 7/7** (langkah `parity` run `45785975447` success; langkah gagal bila satu fixture beda); test kesegaran fixture + vkey di suite offline (`sp1-fixtures.test.ts` 4/4).
 > **Status: ✅ sebagian besar.** Vektor lintas bahasa (TS `encodeQuotePublicValues` == Rust `quote-rules`) untuk quoteHash/txHash/scopeHash/verdict/bitmask; `buildSp1GuestInput` mengisi input guest dari request yang sama. Guest membuktikan Q-001/Q-002/Q-005/Q-DECODE; Q-003/004/006/007 dilaporkan sebagai `hinted_mask` (host hint, tidak diklaim terbukti). Paritas lewat `client.execute` SP1 menunggu H2.
 
 1. `QuoteWitness` harus diisi **dari hasil `evaluateQuoteMatch` di SDK** (bukan dihitung ulang dengan cara lain). Tulis fixture bersama (JSON) yang dipakai test TS **dan** test Rust.
@@ -501,7 +502,7 @@ User tiba di Console, langsung melihat Connect Wallet di atas, terhubung dalam s
 5. **Kriteria selesai:** dari UI testnet, satu keputusan `allow` menghasilkan attestation yang berubah `pending → proven → verified` dengan `verifyTx` yang bisa dibuka.
 
 ## H6. Test dan CI wajib
-> **Status:** Rust `cargo test` ✅ 6/6 (termasuk fixture bersama) · Negatif Solidity ✅ 7/7 · CI ✅ + workflow `SP1 guest` (`cargo prove build` + parity, menunggu run pertama) · Paritas via execute 🟡 (workflow) · E2E testnet ⛔ (H4, butuh prover network).
+> **Status:** Rust `cargo test` ✅ 6/6 (termasuk fixture bersama) · Negatif Solidity ✅ 7/7 · CI ✅ + workflow `SP1 guest` ✅ (`cargo prove build` + vkey drift + parity, run `45785975447`) · Paritas via execute ✅ 7/7 · E2E testnet ⛔ (H4, butuh prover network berbayar).
 
 | Test | Harus membuktikan |
 |---|---|

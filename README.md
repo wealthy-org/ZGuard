@@ -106,7 +106,7 @@ A failing run is red and GitHub emails the repo owner. Repository secrets: `PERM
 
 ## ZK path to "verified" (operator steps)
 
-1. `cd packages/zk/sp1-quote-guest && cargo prove build`, then `cargo prove vkey`. Set `ZGUARD_ZK_SP1_PROGRAM_VKEY`.
+1. ✅ Done in CI (`.github/workflows/sp1.yml`, SP1 v6.10.0): the guest is built, executed in the zkVM against the shared TypeScript fixtures (7/7) and its programVKey `0x001708b1c5d41d1c9d92527acc9db4d1130aad045d7f34e44f740b19470f973c` is pinned in `packages/zk/artifacts/sp1-quote-guest.json` (default in `@zguard/zk`; `ZGUARD_ZK_SP1_PROGRAM_VKEY` only overrides it for a different build).
 2. Run an SP1 prover service and set `ZGUARD_ZK_SP1_PROVER_URL`.
 3. `pnpm deploy:verifier` on **46630** with `ZGUARD_ZK_SP1_GATEWAY` and the vkey. Transfer ownership to a
    multisig (`transferOwnership` → `acceptOwnership`). Set `ZGUARD_ZK_VERIFIER_ADDRESS`.
