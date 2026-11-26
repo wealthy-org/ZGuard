@@ -37,7 +37,8 @@ or the guard is disabled (`GuardDisabledError`).
 | `/v1/*` API (Hono) + Neon store | Implemented. Production needs `DATABASE_URL` (no JSON fallback) | `apps/api/test/offline.test.ts`, `poc-store.test.ts` |
 | x402 billing in USDG | Credit is given only after real settlement: an `onchain` relayer **or** a `deposit` tx bound to the payer by `claimSignature`, both with N confirmations. `offchain` is dev only and refused in production | `poc-x402.test.ts`, `deposit.test.ts` |
 | Rate limits, admin-only revenue, CORS allow-list, p50/p95/p99 metrics | Implemented | `offline.test.ts` |
-| Perm / Terminal guards (`createPermRouterGuard`, `createTerminalSwapGuard`) | **SDK helpers only.** They must be wired into the external Perm/Terminal repos | `c8-integrations.test.ts` |
+| Perm guard (`createPermRouterGuard`) | Wired into Perm as a mandatory, fail-closed gate (live on 4663) | `c8-integrations.test.ts`, Perm `test-zguard-gate.ts` |
+| Local trading terminal `zguard-terminal` (`packages/terminal`) | pons curve quote/buy/sell with exact approvals; every signature goes through `createTerminalSwapGuard`, and there is no unguarded mode | `terminal.test.ts` |
 | MCP server (5 tools) | Implemented in `packages/mcp`; **not published to npm** (run from the repo) | live acceptance §9.6 |
 | ZK verifier contract `ZGuardQuoteVerifier.sol` | Accepts only SP1 gateway proofs. Config changes go through a 2-day timelock; ownership transfer is two-step. **Not deployed** | `forge test` (7 tests; fake proofs revert) |
 | ZK rule engine `packages/zk/quote-rules` | Rust `no_std`. Its public values are byte-identical to the TypeScript SDK | `cargo test` (5 tests) |
@@ -56,7 +57,8 @@ apps/web    Next.js 15 UI. /v1/* and /health are proxied to the API (ZGUARD_INTE
 apps/api    Hono /v1/* server (Vercel function) + Neon Postgres + x402 USDG billing
 packages/sdk  quote-match, signer wrapper, client, CLI, Perm/Terminal helpers
 packages/mcp  MCP stdio server
-packages/zk   ZGuardQuoteVerifier.sol + Foundry tests, quote-rules crate, SP1 guest scaffold, Halo2 skeleton
+packages/terminal  zguard-terminal: local pons curve terminal, ZGuard-guarded before every signature
+packages/zk   ZGuardQuoteVerifier.sol + Foundry tests, quote-rules crate, SP1 guest (built in CI, vkey pinned), Halo2 skeleton
 ```
 
 ## Quickstart
@@ -114,6 +116,31 @@ A failing run is red and GitHub emails the repo owner. Repository secrets: `PERM
 
 The proof covers the quote scope only: payTo/amount equality, commitments and the verdict bitmask.
 Simulation and token risk are never part of the proof.
+
+## Local trading terminal (`zguard-terminal`)
+
+A command-line terminal for RHC/pons bonding curves.
+
+**Guard rules:**
+- Every `approve`, `buy` and `sell` is sent to `POST /v1/guard` (quote parity + simulation + token risk) before the wallet signs.
+- Only an unexpired `allow` bound to the exact bytes is signed.
+- `ZGUARD_TERMINAL_MODE=off` makes it refuse to sign; there is no unguarded mode.
+
+```bash
+pnpm --filter @zguard/terminal build
+export ZGUARD_API_KEY=zg_live_…            # required to trade
+export TERMINAL_PRIVATE_KEY=0x…           # a dedicated hot wallet; never your treasury
+node packages/terminal/dist/cli.js status
+node packages/terminal/dist/cli.js quote buy 0x9118BD806cB3906Dc6d50a4409a9e9dF48172365 0.0001
+node packages/terminal/dist/cli.js buy  0x9118BD806cB3906Dc6d50a4409a9e9dF48172365 0.0001 --yes
+node packages/terminal/dist/cli.js sell 0x9118BD806cB3906Dc6d50a4409a9e9dF48172365 all --yes
+```
+
+**Commands and flags:**
+- Without `--yes`, `buy`/`sell` only print the simulated quote; no ZGuard credit is spent.
+- `sell` first sends an exact approval (only the amount being sold, only to the token's own curve).
+- `--network 4663` switches to mainnet.
+- `--slippage-bps` must be between 1 and 2000.
 
 ## SDK example
 

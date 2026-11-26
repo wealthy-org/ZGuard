@@ -59,7 +59,7 @@ Perintah mengulang: `pnpm install && pnpm --filter @zguard/sdk build && pnpm --f
 | C5 | `/v1/register` tanpa rate limit, tiap akun dapat kredit gratis | 🟠 Sedang-tinggi | dari kode | ✅ diperbaiki |
 | C6 | Test: 6 dari 11 gagal; tidak ada CI | 🟠 Sedang | dijalankan | ✅ diperbaiki (script + CI) |
 | C7 | Default testnet 46630; brief minta mainnet 4663 | 🟠 Sedang | dari kode/README | ⏸ ditunda sesuai keputusan head dev (Bagian L) |
-| C8 | Perm dan terminal hanya helper SDK, bukan integrasi default-on | 🟠 Sedang | dari kode | 🟡 **Perm: ✅ default-on fail-closed, lulus live di mainnet** (tx `0x88ee…49f2`); terminal: repo belum ada |
+| C8 | Perm dan terminal hanya helper SDK, bukan integrasi default-on | 🟠 Sedang | dari kode | ✅ **Perm: default-on fail-closed, lulus live di mainnet** (tx `0x88ee…49f2`); **terminal: `zguard-terminal` lokal (`packages/terminal`), guard wajib tanpa bypass** (2026-11-27) |
 | C9 | README klaim ✅ melebihi bukti | 🟡 Proses | dibandingkan | ✅ diperbaiki (README + teks web) |
 | D3 | Connect Wallet tidak terlihat setelah Open Console (UX) | 🟠 Sedang | screenshot + kode | ✅ diperbaiki di kode; uji wallet asli belum |
 
@@ -76,7 +76,7 @@ Legenda: ✅ sesuai · 🟡 sebagian · ❌ belum ada · ⚠️ melanggar · ⚪
 | Chain utama RHC 4663 | 🟡 | Kode mendukung keduanya, default testnet (C7) |
 | SDK + CLI + MCP + API + wrapper signer | ✅ | Semua paket ada dan kompilasi |
 | Billing x402 USDG | 🟡 | Kode settlement ada; belum terbukti dengan tx nyata dari mesin ini |
-| Default-on di Perm dan terminal | 🟡 | Perm: gate default-on di `/trade` (C8, 2026-11-26). Terminal: menunggu repo |
+| Default-on di Perm dan terminal | ✅ | Perm: gate default-on di `/trade` (C8, 2026-11-26). Terminal: `zguard-terminal` (C8, 2026-11-27) |
 | Lapisan zk Groth16 (wajib) + Halo2 (target) | ⚠️ | Klaim ✅ di README, kenyataan di C1 dan C2 |
 
 ## A2. Quote-match (§6.1)
@@ -112,7 +112,7 @@ Legenda: ✅ sesuai · 🟡 sebagian · ❌ belum ada · ⚠️ melanggar · ⚪
 | 2 | Fixture quote-match + signer menolak (b)-(e) | 🟡 | Test offline ada; hasil tidak dijalankan penuh di sini |
 | 3 | Simulasi swap v4 dan curve cocok dengan saldo onchain | ❌ | Tidak ada tx uji yang tercatat di repo |
 | 4 | Token risk membedakan jenis (sampel nyata) | 🟡 | Test testnet gagal di sini (jaringan) |
-| 5 | Perm/terminal tidak bisa menandatangani tanpa guard | ❌ | Tidak ada kode Perm/terminal di repo |
+| 5 | Perm/terminal tidak bisa menandatangani tanpa guard | ✅ | ~~Tidak ada kode Perm/terminal di repo~~ · Perm gate wajib (C8) · `zguard-terminal` menolak tanpa `allow` (`apps/api/test/terminal.test.ts` 15/15) |
 | 6 | MCP `check_token` dan `guard_bundle` | 🟡 | 5 tool ada; bergantung API hidup · update 2026-11-26: bug `check_token` deny `Q-005,S-FAIL` untuk semua token diperbaiki (MCP-1, `25d3f25`) |
 | 7 | Billing: kredit habis → 402 payable di 4663 | 🟡 | Kode ada; belum terbukti live |
 | 8 | Fail-closed saat API/RPC mati | ✅ | `client.ts` mengembalikan abstain; signer menolak |
@@ -283,8 +283,20 @@ Biaya penyalahgunaan terbatas; pendapatan sesuai pemakaian.
 > - `approve`: spender hanya PermRouter/Permit2 resmi (mainnet wajib = manifest), jumlah persis input quote (≤ uint160, tidak unlimited), chain dipin, value 0; calldata di-decode ulang dan byte itu yang dikirim (`sendTransaction`).
 > - Permit2 `PermitTransferFrom`: domain Permit2 resmi, spender PermRouter, jumlah persis, deadline ≤ 15 menit, nonce acak ≠ 0, typed data dibekukan; signature wajib recover ke akun (akun kontrak/7702 lewat `verifyTypedData` onchain).
 > Bukti: `scripts/test-approval-gate.ts` (Perm) · `pnpm test:approval` + `server:test` · lulus; 8/9 mutant dibunuh (cek spender builder sengaja dobel) · `eslint .`, `tsc`, `next build`, `audit:bundle` lulus · commit Perm `ecb8862`, `0af7eaf`, `5b064e8`.
-> ~~Sisa: uji live satu swap ERC-20 (approve atau Permit2) di mainnet~~; repo terminal belum ada.
+> ~~Sisa: uji live satu swap ERC-20 (approve atau Permit2) di mainnet~~; ~~repo terminal belum ada~~ (lihat update terminal di bawah).
 > **Update 2026-11-27: uji live mainnet ✅ (dicek langsung di RPC 4663, `eth_getLogs` Approval owner Akun A).** (1) `approve(Permit2, 0.01 NVDA)` jumlah persis tx `0x17b9b470a83610d99fe723dda994b708d0d8c7d8ad495fc15b1eb328a26e2554` → jual 0.005 NVDA lewat PermRouter `0x155b…2Ea2` tx `0x1a645ad8b7da93657f219653f0005fc107431ef387bf9e5e2d886c6094fb8d03` success (terima 0.002280771735309248 AAPL). (2) `approve(Permit2, 0.002 AAPL)` jumlah persis tx `0x433d03ce5945f0add0aa13012d658ea3a5020dcf7d6da9a5262925132c462d6f` → jual 0.002 AAPL lewat PermRouter tx `0xb2eda1e74b3e41b8885198b2b39b3a05312e6c85c7fcb6b817fc6c9a296c3619` success. Tidak ada approve unlimited dan tidak ada spender selain Permit2 dari Akun A/B/`0x1FBa` dalam ±4 hari terakhir. Catatan: sisa allowance NVDA→Permit2 0.005 (approve 0.01, jual 0.005); tidak bisa dipakai tanpa signature Permit2 baru dari pemilik; boleh dicabut (`approve(Permit2,0)`).
+
+> **Update 2026-11-27: terminal ✅ — `zguard-terminal`, terminal lokal (bukan repo pihak lain).** Menurut user, "terminal" adalah terminal lokal, jadi dibuat di repo ini: `packages/terminal` (`@zguard/terminal`, bin `zguard-terminal`) untuk curve pons di RHC: `quote`, `buy`, `sell` (exact approve otomatis), `can-launch`, `status`.
+> - Setiap approve/buy/sell lewat `createTerminalSwapGuard` → `/v1/guard` dengan cek `quote` + `simulation` + `token_risk`. Intent dibangun dari argumen CLI (bukan model), dari nilai yang sama dengan calldata. `minOut` diambil dari simulasi `eth_call` dikurangi slippage (1..2000 bps).
+> - Fail-closed tanpa bypass: deny, abstain, allow kedaluwarsa, ZGuard tidak terjangkau dan API key kosong → tidak ada tanda tangan. `ZGUARD_TERMINAL_MODE=off` menampilkan banner merah **dan menolak menandatangani** (lebih ketat dari Perm: tidak ada jalur unguarded sama sekali).
+> - Approve hanya sebesar token yang dijual, hanya ke curve yang di-resolve dari `token.curve()` dan dicek balik `curve.token()`; ada di `intent.allowApprovals`, jadi spender/jumlah lain di-deny ZGuard. Token yang sudah graduate ditolak (trade lewat DEX/Perm).
+> - ABI curve testnet (kontrak tidak terverifikasi) dipulihkan dari dispatcher bytecode dan call onchain: `buy(uint256 minTokensOut, uint256 deadline)` payable `0xd6febde8`, `sell(uint256,uint256,uint256)` `0xd3c9727c`; `eth_call` buy mengembalikan jumlah token.
+> Bukti:
+> - `apps/api/test/terminal.test.ts` · `pnpm test` · 15/15 lulus (parity offline buy/sell/approve, tx dimanipulasi → deny, spender lain → deny, allow → tepat 1 tx dengan byte yang dicek, deny/abstain/expired/unreachable/tanpa key/mode off → 0 tanda tangan, sell = exact approve lalu sell, curve palsu & token graduate ditolak).
+> - Live read-only testnet: `zguard-terminal quote buy 0x9118…2365 0.0001` → curve `0x7206…F3A5`, ~39070.86 KOIP (min 37898.74 @300 bps); tanpa key → `ZGUARD UNAVAILABLE`; mode off → `UNGUARDED`, exit 1.
+> - Live API (`zguard-delta.vercel.app`, key kredit gratis): tx buy dan exact approve buatan terminal untuk Akun B → **`allow`**, quote "re-encoded byte-for-byte", simulation allow, token_risk allow (`kind=pons_curve`). Tidak dikirim (evaluasi saja).
+> - `can-launch`: factory testnet tidak punya `canLaunch` → dilaporkan "not supported" (launch tidak ditawarkan).
+> Sisa: swap Perm Router dari terminal tidak dibuat (butuh quote EIP-712 + Permit2 dari server Perm; dipakai lewat UI Perm). Launch-and-buy baru (create token) tidak dibuat; terminal hanya pre-check `canLaunch`.
 
 **Masalahnya apa**
 `createPermRouterGuard` dan `createTerminalSwapGuard` (`packages/sdk/src/integrations.ts`, 201 baris) adalah helper yang harus dipanggil pihak lain. Tidak ada kode Perm atau terminal di repo, tidak ada PR ke repo mereka, dan tidak ada tes bahwa mematikan guard menolak signer (§9.5).
@@ -568,9 +580,10 @@ Sesuai brief §8.3: jika belum selesai, rilis dengan Groth16 saja dan marketing 
   - ✅ curve non-Pons (TOAST, `kind=other`) 3 tx → MATCH 4/4 masing-masing
   - ✅ **trade curve Pons** (KOIP `0x9118…2365`, `kind=pons_curve`, curve `0x7206…F3A5`, `buy(uint256,uint256)` 0.0005 ETH oleh Akun B) tx `0xc00a6ed0a59b9c5e0d0d383f8112f8ce2bff6a5a603532009e9355643e1bdc73` → **MATCH 4/4** (prediksi 195407.229764919120663678 KOIP = onchain; ETH −0.0005 pembeli / +0.0005 curve)
   - Catatan: RPC publik testnet hanya menyimpan state ±20 menit, jadi script harus dijalankan segera setelah tx.
-- [x] ✅ **Perm selesai (live mainnet, 2026-11-26); terminal menunggu repo.** ~~test guard-off selesai di SDK; integrasi butuh akses repo Perm/terminal.~~ §9.5 integrasi nyata di Perm dan terminal; test "guard dimatikan → signer menolak / UI hard-fail". Butuh akses repo Perm dan terminal.
+- [x] ✅ **Perm selesai (live mainnet, 2026-11-26); terminal selesai (`zguard-terminal`, 2026-11-27).** ~~test guard-off selesai di SDK; integrasi butuh akses repo Perm/terminal.~~ §9.5 integrasi nyata di Perm dan terminal; test "guard dimatikan → signer menolak / UI hard-fail". Butuh akses repo Perm dan terminal.
   Bukti (bagian SDK): `apps/api/test/c8-integrations.test.ts` 5/5 · commit `0d6f9b8`
-  Bukti Perm: gate wajib fail-closed (lihat C8) · swap mainnet tx `0x88eeccb9…49f2` lewat guard · guard-off hanya via `PERM_ZGUARD_MODE=off` + banner merah. Terminal: repo belum ada.
+  Bukti Perm: gate wajib fail-closed (lihat C8) · swap mainnet tx `0x88eeccb9…49f2` lewat guard · guard-off hanya via `PERM_ZGUARD_MODE=off` + banner merah.
+  Bukti terminal: `packages/terminal` · `apps/api/test/terminal.test.ts` · 15/15 (mode off / tanpa key / unreachable / deny / abstain → 0 tanda tangan) · live `/v1/guard` buy curve pons → `allow`.
 - [x] ✅ **selesai (live, wallet asli, 2026-11-25).** ~~402 terbukti lokal; bayar nyata butuh wallet/relayer.~~ §9.7 tx x402 USDG sukses di chain nyata dan 402 saat kredit habis (dengan relayer sungguhan, bukan simulasi).
   Bukti (sebagian): lokal setelah kredit dev habis → `POST /v1/verify` = HTTP 402 dengan `accepts[0].network = eip155:46630`, asset USDG testnet, `settlement.mode = deposit`, `minConfirmations = 3`. Jalur settlement dites offline (`poc-x402.test.ts`, `deposit.test.ts`).
   Bukti live: I9 baris 17 (402 dengan quote USDG di 46630 → deposit USDG nyata dari MetaMask menambah kredit; wallet kosong ditolak).
@@ -643,7 +656,7 @@ Jalankan lewat Node/RPC publik atau Alchemy, lampirkan output di PR.
   Bukti: `.github/workflows/ci.yml`: job `node` (install, `pnpm build`, `pnpm typecheck`, `pnpm test`), `solidity` (`forge test`), `rust` (`cargo test` quote-rules), `live` (opt-in `workflow_dispatch`) · lokal: `pnpm -r typecheck` 5/5, `pnpm test` 61/61 + 7/7 · commit `f73f59b` · **`cargo prove build` belum dimasukkan** karena butuh toolchain SP1; ditambahkan saat H2 dikerjakan
 - [x] Test Solidity (Foundry) untuk `ZGuardQuoteVerifier`.
   Bukti: `packages/zk/foundry/test/ZGuardQuoteVerifier.t.sol` · `forge test -vv` · 7/7 lulus · commit `f1f064d`
-- [ ] 🟡 **timelock + two-step ownership ada di kontrak; multisig dan verifikasi Blockscout setelah deploy.** Multisig + timelock untuk owner verifier sebelum mainnet; verifikasi source di Blockscout.
+- [ ] 🟡 **timelock + two-step ownership ada di kontrak; multisig ✅; timelock Perm 48 jam: skrip + test + rehearsal fork ✅, eksekusi testnet/mainnet menunggu user; SECURITY.md ✅ (ZGuard + Perm); verifier ZGuard dan verifikasi Blockscout setelah deploy.** Multisig + timelock untuk owner verifier sebelum mainnet; verifikasi source di Blockscout.
   **Update 2026-11-26: multisig — mainnet ✅ (Perm owner + treasury, payTo ZGuard di Safe 2-dari-3); verifier ZGuard menunggu deploy SP1.** Safe{Wallet} resmi mendukung Robinhood Chain 4663 dan testnet 46630; singleton Safe sudah ada di kedua chain. Rencana mainnet: Safe 2-dari-3 menjadi `ZGUARD_X402_PAY_TO`, treasury Perm, dan owner Perm Router + v4/v3 adapter (transfer dua langkah). Pause guardian tetap EOA terpisah untuk pause darurat. Owner verifier ZGuard menyusul setelah deploy SP1.
   Bukti testnet:
   - Safe `0xdf495CaeFa70b40B23A8FD1934CDa144ea3e3298`, dibuat lewat SafeProxyFactory pada tx `0xc0436051…f222e`: SafeL2 v1.5.0, owner `0x141D…86a8`/`0x1FBa…f0d9`/`0x3d2f…e3Bf`, threshold 2, tanpa module/guard.
@@ -660,7 +673,9 @@ Jalankan lewat Node/RPC publik atau Alchemy, lampirkan output di PR.
   - **Sisa:**
     - Pause guardian tetap EOA terpisah `0x1FBa` (pause cepat; tidak bisa memindah dana atau unpause).
     - Owner verifier ZGuard dipasang ke Safe setelah verifier SP1 di-deploy.
-    - Timelock 48 jam (PermTimelock) opsional sebelum rilis penuh.
+    - ~~Timelock 48 jam (PermTimelock) opsional sebelum rilis penuh.~~ **Update 2026-11-27: kode + rehearsal ✅, eksekusi menunggu user.** Perm `contracts/scripts/timelock-handoff.cjs` (+ `contracts/scripts/lib/timelock-handoff.cjs`): `deploy` PermTimelock (proposer = Safe, executor = siapa saja, admin = 0) → `plan` (file Safe Transaction Builder: `transferOwnership(timelock)` ×3 + `scheduleBatch(acceptOwnership ×3, grantRole(CANCELLER, guardian))`) → tunggu 48 jam → `execute` → `verify` (15 cek). Mainnet dikunci 172800 dtk; monitor Perm sudah mewajibkan ≥172800 bila `manifest.timelock` diisi.
+      Bukti: Perm `contracts/test/PermTimelockHandoff.test.cjs` · `hardhat test` · 4/4 (+1 test lama) lulus: hanya Safe yang bisa propose; execute sebelum 48 jam revert; Safe bisa cancel; setelah handoff Safe tidak bisa `setTreasury` langsung, guardian `pause()` seketika, `unpause()` hanya lewat timelock 48 jam, guardian bisa veto antrian; delay < 48 jam ditolak · rehearsal fork **mainnet** 4663 (Safe asli di-impersonate, Router/v4/v3 asli) → owner = timelock, guardian `0x1FBa` canceller, pause seketika, Safe tidak bisa unpause langsung · rehearsal fork testnet 46630 dengan skrip lengkap (deploy → plan → transfer Akun A → file Safe → execute terlalu cepat ditolak → execute → verify 15/15 PASS).
+      Sisa (user): testnet lalu mainnet, deploy + 2 transaksi Safe + jeda 48 jam; tx dicatat di sini dan di manifest `timelockHandoff`.
 - [x] Monitoring: RPC, Neon, kegagalan prover, alert saldo relayer. (kegagalan prover menunggu SP1)
   Status: `/health` (sequencer, storage) dan `/v1/metrics` (latensi, 5xx) tersedia sebagai sumber; alerting eksternal belum dipasang (butuh layanan monitoring user).
   **Update 2026-11-26: monitor terjadwal aktif ✅** (secret `PERM_ZGUARD_API_KEY` dipasang user; run manual GitHub Actions "Production monitor" #1 hijau 5/5: api_health chain 46630 · neon-postgres · block age 1s; api_payment payTo 0x141D…86a8 · deposit; web_home 200; perm_gate enforce · ready · eip155:4663; perm_credit 0.145000 USDG ≈ 9 swaps). Detail: `.github/workflows/monitor.yml` menjalankan `scripts/monitor.mjs` tiap 15 menit. Run yang gagal jadi merah dan GitHub mengirim email; opsional webhook Discord/Slack. Yang dicek:
