@@ -8,11 +8,11 @@
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "build": "tsc -p tsconfig.json",
-    "test": "tsx --test test/offline.test.ts test/poc-store.test.ts test/poc-x402.test.ts test/deposit.test.ts test/poc-quote-match.test.ts test/zk-honesty.test.ts test/c8-integrations.test.ts test/payto-config.test.ts test/poc-signer.test.ts test/poc-url-scanner.test.ts test/poc-mcp.test.ts test/poc-content-scan.test.ts test/poc-token-risk.test.ts test/poc-simulate.test.ts test/poc-mcp-cli.test.ts test/poc-buyback.test.ts test/sp1-fixtures.test.ts",
+    "test": "tsx --test test/offline.test.ts test/poc-store.test.ts test/poc-x402.test.ts test/deposit.test.ts test/poc-quote-match.test.ts test/zk-honesty.test.ts test/c8-integrations.test.ts test/payto-config.test.ts test/poc-signer.test.ts test/poc-url-scanner.test.ts test/poc-mcp.test.ts test/poc-content-scan.test.ts test/poc-token-risk.test.ts test/poc-simulate.test.ts test/poc-mcp-cli.test.ts test/poc-buyback.test.ts test/sp1-fixtures.test.ts test/terminal.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
-    "test:offline": "tsx --test test/offline.test.ts test/poc-store.test.ts test/poc-x402.test.ts test/deposit.test.ts test/poc-quote-match.test.ts test/zk-honesty.test.ts test/c8-integrations.test.ts test/payto-config.test.ts test/poc-signer.test.ts test/poc-url-scanner.test.ts test/poc-mcp.test.ts test/poc-content-scan.test.ts test/poc-token-risk.test.ts test/poc-simulate.test.ts test/poc-mcp-cli.test.ts test/poc-buyback.test.ts test/sp1-fixtures.test.ts",
+    "test:offline": "tsx --test test/offline.test.ts test/poc-store.test.ts test/poc-x402.test.ts test/deposit.test.ts test/poc-quote-match.test.ts test/zk-honesty.test.ts test/c8-integrations.test.ts test/payto-config.test.ts test/poc-signer.test.ts test/poc-url-scanner.test.ts test/poc-mcp.test.ts test/poc-content-scan.test.ts test/poc-token-risk.test.ts test/poc-simulate.test.ts test/poc-mcp-cli.test.ts test/poc-buyback.test.ts test/sp1-fixtures.test.ts test/terminal.test.ts",
     "test:live": "tsx --test test/testnet-46630.test.ts test/acceptance.test.ts"
   },
   "dependencies": {
@@ -28,6 +28,7 @@
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
     "@zguard/mcp": "workspace:*",
+    "@zguard/terminal": "workspace:*",
     "drizzle-kit": "^0.31.1"
   }
 }
