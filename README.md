@@ -90,6 +90,20 @@ CI (`.github/workflows/ci.yml`) runs install, build, typecheck, offline tests, `
 | Web | `apps/web` | `ZGUARD_INTERNAL_API_URL=https://<api-project>.vercel.app`. If it is missing, `/v1/*` returns 503 `misconfigured` (no redirect loop) |
 | API | `apps/api` | `ZGUARD_ACTIVE_CHAIN_ID=46630`, `DATABASE_URL`, `ZGUARD_X402_PAY_TO`, `ZGUARD_ADMIN_API_KEY`, `ZGUARD_CORS_ORIGINS`, `ZGUARD_DEV_FREE_CREDIT_MICRO_USDG=0` |
 
+## Production monitor
+
+`.github/workflows/monitor.yml` runs `scripts/monitor.mjs` every 15 minutes (no dependencies; tests: `node --test scripts/monitor.test.mjs`). It checks:
+
+| Check | Fails when |
+|---|---|
+| `api_health` | `/health` not 200, sequencer down, or latest block older than 300 s |
+| `api_payment` | `paymentRails.payTo` missing/invalid or a settlement error (x402 payments would stop) |
+| `web_home` | web home not 200 |
+| `perm_gate` | Perm `/api/zguard` is `off` (unguarded) or not `ready` (every Perm swap blocked) |
+| `perm_credit` | Perm's ZGuard key has fewer than `ZGUARD_MONITOR_MIN_SWAPS` (default 5) guard calls of credit |
+
+A failing run is red and GitHub emails the repo owner. Repository secrets: `PERM_ZGUARD_API_KEY` (enables the credit check) and optional `ZGUARD_ALERT_WEBHOOK_URL` (Discord/Slack). GitHub pauses scheduled workflows after 60 days without repository activity; re-enable it in the Actions tab if that happens.
+
 ## ZK path to "verified" (operator steps)
 
 1. `cd packages/zk/sp1-quote-guest && cargo prove build`, then `cargo prove vkey`. Set `ZGUARD_ZK_SP1_PROGRAM_VKEY`.
