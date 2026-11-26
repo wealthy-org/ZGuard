@@ -1,0 +1,27 @@
+{
+  "name": "@zguard/terminal",
+  "version": "0.1.0",
+  "description": "ZGuard local trading terminal for RHC/pons bonding curves: every approve, buy and sell is guarded by ZGuard before signing (fail-closed, no bypass)",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "zguard-terminal": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "tsx src/cli.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@zguard/sdk": "workspace:*",
+    "viem": "^2.30.0"
+  }
+}

@@ -10,9 +10,9 @@
     "dev": "pnpm --filter @zguard/sdk build && pnpm --filter @zguard/zk build && pnpm --parallel --filter @zguard/api --filter @zguard/web dev",
     "dev:api": "pnpm --filter @zguard/sdk build && pnpm --filter @zguard/zk build && pnpm --filter @zguard/api dev",
     "dev:web": "pnpm --filter @zguard/web dev",
-    "build": "pnpm --filter @zguard/sdk build && pnpm --filter @zguard/zk build && pnpm --filter @zguard/mcp build && pnpm --filter @zguard/api build && pnpm --filter @zguard/web build",
+    "build": "pnpm --filter @zguard/sdk build && pnpm --filter @zguard/zk build && pnpm --filter @zguard/mcp build && pnpm --filter @zguard/terminal build && pnpm --filter @zguard/api build && pnpm --filter @zguard/web build",
     "typecheck": "pnpm -r typecheck",
-    "test": "pnpm --filter @zguard/sdk build && pnpm --filter @zguard/zk build && pnpm --filter @zguard/api test:offline && pnpm --filter @zguard/web test",
+    "test": "pnpm --filter @zguard/sdk build && pnpm --filter @zguard/zk build && pnpm --filter @zguard/terminal build && pnpm --filter @zguard/api test:offline && pnpm --filter @zguard/web test",
     "db:generate": "pnpm --filter @zguard/api db:generate",
     "db:push": "pnpm --filter @zguard/api db:push",
     "deploy:verifier": "pnpm --filter @zguard/zk deploy",
@@ -20,7 +20,8 @@
     "test:offline": "pnpm test",
     "test:live": "pnpm --filter @zguard/sdk build && pnpm --filter @zguard/zk build && pnpm --filter @zguard/api test:live",
     "test:sol": "cd packages/zk/foundry && forge test -vv",
-    "test:rust": "cd packages/zk/quote-rules && cargo test"
+    "test:rust": "cd packages/zk/quote-rules && cargo test",
+    "terminal": "pnpm --filter @zguard/terminal start"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",

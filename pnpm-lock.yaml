@@ -51,6 +51,9 @@ importers:
       '@zguard/mcp':
         specifier: workspace:*
         version: link:../../packages/mcp
+      '@zguard/terminal':
+        specifier: workspace:*
+        version: link:../../packages/terminal
       drizzle-kit:
         specifier: ^0.31.1
         version: 0.31.11
@@ -130,6 +133,15 @@ importers:
       zod:
         specifier: ^3.25.0
         version: 3.25.76
+
+  packages/terminal:
+    dependencies:
+      '@zguard/sdk':
+        specifier: workspace:*
+        version: link:../sdk
+      viem:
+        specifier: ^2.30.0
+        version: 2.58.6(typescript@5.9.3)(zod@3.25.76)
 
   packages/zk:
     dependencies:
