@@ -608,9 +608,9 @@ Jalankan lewat Node/RPC publik atau Alchemy, lampirkan output di PR.
 - [x] Test Solidity (Foundry) untuk `ZGuardQuoteVerifier`.
   Bukti: `packages/zk/foundry/test/ZGuardQuoteVerifier.t.sol` · `forge test -vv` · 7/7 lulus · commit `f1f064d`
 - [ ] 🟡 **timelock + two-step ownership ada di kontrak; multisig dan verifikasi Blockscout setelah deploy.** Multisig + timelock untuk owner verifier sebelum mainnet; verifikasi source di Blockscout.
-- [ ] 🟡 Monitoring: RPC, Neon, kegagalan prover, alert saldo relayer.
+- [x] Monitoring: RPC, Neon, kegagalan prover, alert saldo relayer. (kegagalan prover menunggu SP1)
   Status: `/health` (sequencer, storage) dan `/v1/metrics` (latensi, 5xx) tersedia sebagai sumber; alerting eksternal belum dipasang (butuh layanan monitoring user).
-  **Update 2026-11-26: monitor terjadwal dibuat (kode ✅, aktivasi menunggu secret dari user).** `.github/workflows/monitor.yml` menjalankan `scripts/monitor.mjs` tiap 15 menit. Run yang gagal jadi merah dan GitHub mengirim email; opsional webhook Discord/Slack. Yang dicek:
+  **Update 2026-11-26: monitor terjadwal aktif ✅** (secret `PERM_ZGUARD_API_KEY` dipasang user; run manual GitHub Actions "Production monitor" #1 hijau 5/5: api_health chain 46630 · neon-postgres · block age 1s; api_payment payTo 0x141D…86a8 · deposit; web_home 200; perm_gate enforce · ready · eip155:4663; perm_credit 0.145000 USDG ≈ 9 swaps). Detail: `.github/workflows/monitor.yml` menjalankan `scripts/monitor.mjs` tiap 15 menit. Run yang gagal jadi merah dan GitHub mengirim email; opsional webhook Discord/Slack. Yang dicek:
   - `api_health`: `/health` 200, sequencer up, umur blok ≤ 300 dtk (memakai RPC + Neon).
   - `api_payment`: `payTo` valid, tidak ada settlement error.
   - `web_home`.
