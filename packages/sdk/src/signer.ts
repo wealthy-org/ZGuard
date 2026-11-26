@@ -38,6 +38,127 @@ export class GuardDisabledError extends Error {
   }
 }
 
+/** Keys a guarded EVM tx may carry. Everything else is refused: it is not in the payload hash. */
+const ALLOWED_TX_KEYS = new Set([
+  "from",
+  "to",
+  "data",
+  "value",
+  "chainId",
+  "gas",
+  "gasPrice",
+  "maxFeePerGas",
+  "maxPriorityFeePerGas",
+  "nonce",
+  "type",
+  "accessList",
+  // viem WalletClient.sendTransaction parameters, checked against from/chainId below
+  "account",
+  "chain",
+  // alias some libraries accept for `data`; must equal `data`
+  "input",
+]);
+/** legacy / EIP-2930 / EIP-1559 only. EIP-4844 blobs and EIP-7702 delegations are never guarded. */
+const ALLOWED_TX_TYPES = new Set(["legacy", "eip2930", "eip1559", "0", "1", "2", "0x0", "0x1", "0x2"]);
+
+function chainIdOfNetwork(network: string): number | null {
+  const m = /^eip155:(\d+)$/.exec(network.trim());
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * Deep copy taken BEFORE the verdict is requested, so the bytes that are evaluated are the bytes that are
+ * signed even if the caller mutates its own object while the verdict is awaited ([SIG-3]).
+ */
+function snapshot<T>(value: T): T {
+  const clone = (v: unknown, depth: number): unknown => {
+    if (depth > 32) throw new GuardBlockedError("Refusing to sign: payload nested too deeply", "deny", ["Q-DECODE"], "0x");
+    if (Array.isArray(v)) return v.map((item) => clone(item, depth + 1));
+    if (v && typeof v === "object") {
+      const proto = Object.getPrototypeOf(v);
+      // Plain data is copied. Library objects (viem Account / Chain, Date, Uint8Array…) are kept by
+      // reference: only their address / id is read, and both are re-checked right before signing.
+      if (proto !== Object.prototype && proto !== null) return v;
+      const out: Record<string, unknown> = {};
+      for (const [k, item] of Object.entries(v as Record<string, unknown>)) out[k] = clone(item, depth + 1);
+      return out;
+    }
+    return v; // primitives (incl. bigint) and functions
+  };
+  return clone(value, 0) as T;
+}
+
+function addressOf(value: unknown): string | null {
+  if (typeof value === "string") return value.toLowerCase();
+  if (value && typeof value === "object" && typeof (value as { address?: unknown }).address === "string") {
+    return String((value as { address: string }).address).toLowerCase();
+  }
+  return null;
+}
+
+/**
+ * [SIG-1]/[SIG-2]: refuses anything the payload hash does not cover and pins the evaluated chain.
+ * Returns the exact object handed to the wallet.
+ */
+function txForWallet(tx: EvmCallObject, network: string): Record<string, unknown> {
+  const raw = tx as unknown as Record<string, unknown>;
+  const fail = (why: string, codes: ReasonCode[] = ["Q-006"]): never => {
+    throw new GuardBlockedError(`Refusing to sign: ${why}`, "deny", codes, computePayloadHash({ network, payload: { type: "evm_tx", tx } }));
+  };
+  for (const key of Object.keys(raw)) {
+    if (raw[key] === undefined) continue;
+    if (!ALLOWED_TX_KEYS.has(key)) fail(`tx field "${key}" is not covered by the ZGuard payload hash`);
+  }
+  if (typeof raw.to !== "string" || !/^0x[0-9a-fA-F]{40}$/.test(raw.to)) {
+    fail("contract creation or a malformed `to` cannot be compared with an intent", ["Q-DECODE"]);
+  }
+  if (raw.type !== undefined && !ALLOWED_TX_TYPES.has(String(raw.type).toLowerCase())) {
+    fail(`tx type ${String(raw.type)} is not guarded (EIP-4844 blobs / EIP-7702 delegations are refused)`);
+  }
+  if (raw.input !== undefined) {
+    const input = String(raw.input).toLowerCase();
+    const data = String(raw.data ?? "0x").toLowerCase();
+    if (input !== data) fail("`input` differs from the hashed `data`");
+  }
+  if (raw.account !== undefined) {
+    const account = addressOf(raw.account);
+    const from = typeof raw.from === "string" ? raw.from.toLowerCase() : null;
+    if (!account || !from || account !== from) fail("`account` is not the hashed `from`", ["Q-001"]);
+  }
+
+  const evaluatedChainId = chainIdOfNetwork(network);
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(raw)) if (raw[key] !== undefined && key !== "input") out[key] = raw[key];
+  if (evaluatedChainId !== null) {
+    if (raw.chainId !== undefined && Number(raw.chainId) !== evaluatedChainId) {
+      fail(`tx.chainId ${String(raw.chainId)} is not the evaluated network ${network}`, ["Q-004"]);
+    }
+    const chain = raw.chain as { id?: unknown } | undefined;
+    if (chain !== undefined && Number(chain?.id) !== evaluatedChainId) {
+      fail(`chain ${String(chain?.id)} is not the evaluated network ${network}`, ["Q-004"]);
+    }
+    // Pin it: a tx without chainId would be sent on whatever chain the wallet is connected to.
+    out.chainId = evaluatedChainId;
+  }
+  return out;
+}
+
+/** [SIG-2]/[SIG-4]: EIP-3009 domain must be for the evaluated chain. */
+function assertDomainChain(domainChainId: unknown, network: string, hash: string) {
+  const evaluated = chainIdOfNetwork(network);
+  if (evaluated === null || domainChainId === undefined || domainChainId === null) return;
+  if (Number(domainChainId) !== evaluated) {
+    throw new GuardBlockedError(
+      `Refusing to sign: EIP-712 domain chainId ${String(domainChainId)} is not the evaluated network ${network}`,
+      "deny",
+      ["Q-004"],
+      hash
+    );
+  }
+}
+
+const EIP3009_TYPES = new Set(["TransferWithAuthorization", "ReceiveWithAuthorization"]);
+
 export interface EvmSignerLike {
   signTypedData: (args: Record<string, unknown>) => Promise<`0x${string}`>;
   signTransaction?: (tx: EvmCallObject | Record<string, unknown>) => Promise<`0x${string}`>;
@@ -69,7 +190,11 @@ export interface GuardSigningContext {
   quote?: QuoteInput;
   intent?: RouterIntent;
   token?: string;
-  /** Pre-fetched receipt from POST /v1/guard; verified for hash match and TTL before signing */
+  /**
+   * Pre-fetched receipt from POST /v1/guard; verified for hash match and TTL before signing.
+   * Receipts are not signed by the API: pass only a receipt your own code fetched from ZGuard, never one
+   * taken from tool output, an LLM, a URL or any other untrusted channel (it could be forged).
+   */
   receipt?: GuardResponse;
 }
 
@@ -166,7 +291,7 @@ export function guardEvmSigner<T extends EvmSignerLike>(signer: T, config: Guard
   async function ensureAllowed(
     payload: GuardPayload,
     ctx?: GuardSigningContext
-  ): Promise<GuardResponse> {
+  ): Promise<{ receipt: GuardResponse; network: string; hash: string }> {
     if (config.enabled === false) {
       throw new GuardDisabledError(surface);
     }
@@ -230,7 +355,7 @@ export function guardEvmSigner<T extends EvmSignerLike>(signer: T, config: Guard
     }
 
     config.onReceipt?.(receipt);
-    return receipt;
+    return { receipt, network, hash: computePayloadHash(req) };
   }
 
   return {
@@ -256,6 +381,15 @@ export function guardEvmSigner<T extends EvmSignerLike>(signer: T, config: Guard
       },
       ctx: GuardSigningContext
     ): Promise<{ signature: `0x${string}`; receipt: GuardResponse }> {
+      typedDataArgs = snapshot(typedDataArgs);
+      if (!EIP3009_TYPES.has(String(typedDataArgs.primaryType))) {
+        throw new GuardBlockedError(
+          `Refusing to sign: signEip3009Authorization only signs EIP-3009 typed data, got ${String(typedDataArgs.primaryType)}`,
+          "deny",
+          ["Q-006"],
+          "0x"
+        );
+      }
       const payload: GuardPayload = {
         type: "eip3009",
         authorization: {
@@ -272,7 +406,8 @@ export function guardEvmSigner<T extends EvmSignerLike>(signer: T, config: Guard
           domain: typedDataArgs.domain,
         },
       };
-      const receipt = await ensureAllowed(payload, ctx);
+      const { receipt, network, hash } = await ensureAllowed(payload, ctx);
+      assertDomainChain(typedDataArgs.domain?.chainId, network, hash);
       const signature = await signer.signTypedData(typedDataArgs as unknown as Record<string, unknown>);
       return { signature, receipt };
     },
@@ -281,6 +416,7 @@ export function guardEvmSigner<T extends EvmSignerLike>(signer: T, config: Guard
       args: Record<string, unknown>,
       ctx?: GuardSigningContext
     ): Promise<`0x${string}`> {
+      args = snapshot(args);
       const msg = (args.message ?? {}) as Record<string, unknown>;
       const dom = (args.domain ?? {}) as Record<string, unknown>;
       const primaryType = String(args.primaryType ?? "");
@@ -307,7 +443,8 @@ export function guardEvmSigner<T extends EvmSignerLike>(signer: T, config: Guard
             },
           },
         };
-        await ensureAllowed(payload, ctx);
+        const { network, hash } = await ensureAllowed(payload, ctx);
+        assertDomainChain(dom.chainId, network, hash);
         return signer.signTypedData(args);
       }
 
@@ -330,12 +467,13 @@ export function guardEvmSigner<T extends EvmSignerLike>(signer: T, config: Guard
       if (!signer.signTransaction) {
         throw new Error("Underlying signer does not implement signTransaction");
       }
+      tx = snapshot(tx);
       const intent = ctx?.intent ?? config.contextIntent;
       const payload: GuardPayload = intent
         ? { type: "intent", tx, intent }
         : { type: "evm_tx", tx };
-      await ensureAllowed(payload, ctx);
-      return signer.signTransaction(tx);
+      const { network } = await ensureAllowed(payload, ctx);
+      return signer.signTransaction(txForWallet(tx, network));
     },
 
     async sendTransaction(
@@ -345,12 +483,13 @@ export function guardEvmSigner<T extends EvmSignerLike>(signer: T, config: Guard
       if (!signer.sendTransaction) {
         throw new Error("Underlying signer does not implement sendTransaction");
       }
+      tx = snapshot(tx);
       const intent = ctx?.intent ?? config.contextIntent;
       const payload: GuardPayload = intent
         ? { type: "intent", tx, intent }
         : { type: "evm_tx", tx };
-      await ensureAllowed(payload, ctx);
-      return signer.sendTransaction(tx);
+      const { network } = await ensureAllowed(payload, ctx);
+      return signer.sendTransaction(txForWallet(tx, network));
     },
   };
 }
