@@ -1,0 +1,23 @@
+[package]
+name = "zguard-sp1-host"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "ZGuard SP1 host: prints the programVKey of the quote guest and runs the shared TS fixtures through the real guest ELF in the zkVM (execute, no proof)"
+publish = false
+
+[[bin]]
+name = "vkey"
+path = "src/bin/vkey.rs"
+
+[[bin]]
+name = "parity"
+path = "src/bin/parity.rs"
+
+[dependencies]
+sp1-sdk = { version = "6.10.0", features = ["blocking"] }
+serde_json = "1"
+hex = "0.4"
+
+[build-dependencies]
+sp1-build = "6.10.0"

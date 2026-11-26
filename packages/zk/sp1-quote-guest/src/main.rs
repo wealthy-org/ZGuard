@@ -1,9 +1,9 @@
-//! ZGuard quote-match SP1 guest — SCAFFOLD (gap C2).
+//! ZGuard quote-match SP1 guest (gap C2 / H2).
 //!
-//! Status: compiles only with the Succinct toolchain (`cargo prove build`), which is not available in
-//! this repository's CI. The rule logic lives in `../quote-rules` and IS unit-tested natively
-//! (`cargo test` there), including a cross-language vector proving that the committed public values
-//! equal the TypeScript `encodeQuotePublicValues` output byte-for-byte.
+//! Built with the Succinct toolchain (`cargo prove build`, SP1 v6.10.0) in CI (`.github/workflows/sp1.yml`),
+//! which also prints the `programVKey` (`sp1-host` `vkey`) and executes this ELF in the zkVM for every shared
+//! TypeScript fixture (`sp1-host` `parity`). The rule logic lives in `../quote-rules` and is unit-tested
+//! natively (`cargo test` there) against the same fixture file.
 //!
 //! Inputs (in order):
 //!   1. canonical quote JSON bytes  (TS `canonicalQuoteAndTxJson().quoteJson`)

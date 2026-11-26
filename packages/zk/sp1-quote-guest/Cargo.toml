@@ -3,8 +3,8 @@ name = "zguard-sp1-quote-guest"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
-description = "ZGuard quote-match SP1 guest (scaffold: build with `cargo prove build`; not built in CI yet)"
+description = "ZGuard quote-match SP1 guest (built with `cargo prove build` in CI: .github/workflows/sp1.yml)"
 
 [dependencies]
-sp1-zkvm = "4.1.0"
+sp1-zkvm = "6.10.0"
 zguard-quote-rules = { path = "../quote-rules" }
