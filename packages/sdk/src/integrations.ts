@@ -83,7 +83,7 @@ export function createPermRouterGuard(opts: DistributionGuardOptions = {}) {
         surfaceName: "Perm DEX Router",
       });
 
-      if (guarded.sendTransaction) {
+      if (input.signer.sendTransaction) {
         const hash = await guarded.sendTransaction(input.tx, {
           intent: input.intent,
           token: input.tokenAddress,
@@ -92,7 +92,7 @@ export function createPermRouterGuard(opts: DistributionGuardOptions = {}) {
         return { receipt, txHashOrSig: hash };
       }
 
-      if (guarded.signTransaction) {
+      if (input.signer.signTransaction) {
         const sig = await guarded.signTransaction(input.tx, {
           intent: input.intent,
           token: input.tokenAddress,
@@ -179,7 +179,7 @@ export function createTerminalSwapGuard(opts: DistributionGuardOptions = {}) {
         surfaceName: "RHC/pons Trading Terminal",
       });
 
-      if (guarded.sendTransaction) {
+      if (params.signer.sendTransaction) {
         const hash = await guarded.sendTransaction(params.tx, {
           intent: params.intent,
           token: params.tokenAddress,
@@ -188,7 +188,7 @@ export function createTerminalSwapGuard(opts: DistributionGuardOptions = {}) {
         return { receipt, txHashOrSig: hash };
       }
 
-      if (guarded.signTransaction) {
+      if (params.signer.signTransaction) {
         const sig = await guarded.signTransaction(params.tx, {
           intent: params.intent,
           token: params.tokenAddress,
