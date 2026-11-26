@@ -209,6 +209,30 @@ mod tests {
         assert_eq!((v.verdict, v.rule_bitmask), (ABSTAIN, QDECODE));
     }
 
+    /// H3 parity: every fixture produced by the TypeScript pipeline (`pnpm --filter @zguard/zk fixtures:sp1`)
+    /// must yield byte-identical public values here. The SP1 host runs the same file through the real
+    /// guest ELF (`sp1-host` `parity`).
+    #[test]
+    fn shared_fixtures_match_typescript_public_values() {
+        let raw = include_str!("../../fixtures/sp1-quote-fixtures.json");
+        let fixtures: Value = serde_json::from_str(raw).expect("fixtures json");
+        let list = fixtures.as_array().expect("array");
+        assert!(list.len() >= 7, "expected the full fixture set");
+        for f in list {
+            let name = f["name"].as_str().unwrap();
+            let h = &f["hints"];
+            let hints = Hints {
+                asset_mismatch: h["asset_mismatch"].as_bool().unwrap(),
+                chain_mismatch: h["chain_mismatch"].as_bool().unwrap(),
+                unexpected_approval: h["unexpected_approval"].as_bool().unwrap(),
+                domain_verified: h["domain_verified"].as_bool().unwrap(),
+            };
+            let v = evaluate(f["quoteJson"].as_str().unwrap().as_bytes(), f["txJson"].as_str().unwrap().as_bytes(), hints);
+            let got = alloc::format!("0x{}", hex(&public_values(&v)));
+            assert_eq!(got, f["expectedPublicValues"].as_str().unwrap(), "fixture {name}");
+        }
+    }
+
     #[test]
     fn hinted_bits_are_reported_separately() {
         let tx = TX_JSON.replace("bbbb", "aaaa");
