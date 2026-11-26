@@ -84,6 +84,124 @@ const PONS_V2_HOOK_ABI = parseAbi([
 
 // Selectors: mint(address,uint256)=0x40c10f19, mint(uint256)=0xa0712d68, faucet()=0xde5f72fd
 const MINT_SELECTORS_HEX = ["40c10f19", "a0712d68", "de5f72fd"];
+// AccessControl hasRole(bytes32,address)=0x91d14854 / grantRole=0x2f2ff15d: mint authority held by roles,
+// which owner()/getOwner()/admin() cannot show (TR-3).
+const ACCESS_CONTROL_SELECTORS_HEX = ["91d14854", "2f2ff15d"];
+// UUPS upgradeTo(address)=0x3659cfe6, upgradeToAndCall(address,bytes)=0x4f1ef286
+const UPGRADE_SELECTORS_HEX = ["3659cfe6", "4f1ef286"];
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+
+// EIP-1967 slots (TR-2)
+const EIP1967_IMPLEMENTATION_SLOT = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc" as Hex;
+const EIP1967_ADMIN_SLOT = "0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103" as Hex;
+const EIP1967_BEACON_SLOT = "0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50" as Hex;
+const BEACON_ABI = parseAbi([
+  "function implementation() view returns (address)",
+  "function owner() view returns (address)",
+]);
+
+function slotToAddress(word: Hex | undefined | null): Hex | null {
+  if (!word || !/^0x[0-9a-fA-F]{1,64}$/.test(word)) return null;
+  const a = `0x${word.slice(2).padStart(64, "0").slice(-40)}`.toLowerCase();
+  return a === ZERO_ADDRESS ? null : (a as Hex);
+}
+
+export interface ProxyInspection {
+  kind: "eip1967" | "beacon" | "eip1167" | null;
+  implementation: Hex | null;
+  implementationCode: Hex | null;
+  /** Someone can still swap the logic (and with it the supply rules). */
+  upgradeable: boolean;
+  upgradeAuthority: string | null;
+}
+
+/**
+ * TR-2: a proxy's own bytecode is only a forwarder, so selector scans must also cover the implementation,
+ * and a proxy whose admin/beacon owner/UUPS owner is live can change the supply rules at any time.
+ */
+export async function inspectProxy(client: PublicClient, addr: Hex, bytecode: Hex, owner: string | null): Promise<ProxyInspection> {
+  const none: ProxyInspection = { kind: null, implementation: null, implementationCode: null, upgradeable: false, upgradeAuthority: null };
+  const code = bytecode.toLowerCase();
+  // EIP-1167 minimal proxy: 363d3d373d3d3d363d73<impl>5af43d82803e903d91602b57fd5bf3 (immutable).
+  const clone = /^0x363d3d373d3d3d363d73([0-9a-f]{40})5af43d82803e903d91602b57fd5bf3$/.exec(code);
+  const readSlot = (slot: Hex) => client.getStorageAt({ address: addr, slot }).catch(() => null);
+  const [implWord, adminWord, beaconWord] = await Promise.all([
+    readSlot(EIP1967_IMPLEMENTATION_SLOT),
+    readSlot(EIP1967_ADMIN_SLOT),
+    readSlot(EIP1967_BEACON_SLOT),
+  ]);
+  let kind: ProxyInspection["kind"] = null;
+  let implementation: Hex | null = null;
+  let upgradeable = false;
+  let upgradeAuthority: string | null = null;
+
+  if (clone) {
+    kind = "eip1167";
+    implementation = `0x${clone[1]}` as Hex;
+  } else if (slotToAddress(implWord)) {
+    kind = "eip1967";
+    implementation = slotToAddress(implWord);
+    const admin = slotToAddress(adminWord);
+    if (admin) {
+      upgradeable = true;
+      upgradeAuthority = admin;
+    }
+  } else if (slotToAddress(beaconWord)) {
+    kind = "beacon";
+    const beacon = slotToAddress(beaconWord)!;
+    const [impl, beaconOwner] = await Promise.all([
+      client.readContract({ address: beacon, abi: BEACON_ABI, functionName: "implementation" }).catch(() => null),
+      client.readContract({ address: beacon, abi: BEACON_ABI, functionName: "owner" }).catch(() => null),
+    ]);
+    implementation = impl ? (impl.toLowerCase() as Hex) : null;
+    // A beacon whose owner cannot be shown to be renounced is treated as upgradeable.
+    if (!beaconOwner || beaconOwner.toLowerCase() !== ZERO_ADDRESS) {
+      upgradeable = true;
+      upgradeAuthority = beaconOwner ?? `beacon ${beacon}`;
+    }
+  } else {
+    return none;
+  }
+
+  const implementationCode = implementation
+    ? await client.getCode({ address: implementation }).catch(() => null) ?? null
+    : null;
+  // UUPS: the upgrade function lives in the implementation and is gated by the token's own owner/roles.
+  const implLower = (implementationCode ?? "0x").toLowerCase();
+  if (kind === "eip1967" && !upgradeable && UPGRADE_SELECTORS_HEX.some((sel) => implLower.includes(sel))) {
+    const roleGated = ACCESS_CONTROL_SELECTORS_HEX.some((sel) => implLower.includes(sel));
+    if (owner || roleGated) {
+      upgradeable = true;
+      upgradeAuthority = owner ?? "AccessControl role";
+    }
+  }
+  // Unknown implementation code = cannot prove anything about supply: treat as upgradeable/unknown.
+  if (kind !== "eip1167" && implementation && !implementationCode) {
+    upgradeable = true;
+    upgradeAuthority = upgradeAuthority ?? "unknown";
+  }
+  return { kind, implementation, implementationCode, upgradeable, upgradeAuthority };
+}
+
+// TR-1: testnet pons factories keep a registry of the tokens and curves they launched. Verified on 46630
+// against KOIP (0x9118…2365, curve 0x7206…F3A5, factory 0x40f1…DF59): selector 0x4d0b43f0(token) and
+// 0x30343c74(curve) return true; an unrelated address returns false. Present on factoryV1 and launchRouter.
+const PONS_TESTNET_IS_TOKEN_SELECTOR = "0x4d0b43f0";
+const PONS_TESTNET_IS_CURVE_SELECTOR = "0x30343c74";
+
+async function ponsTestnetFactoryConfirms(client: PublicClient, factory: Hex, token: Hex, curve: Hex): Promise<boolean> {
+  const word = (a: Hex) => a.slice(2).toLowerCase().padStart(64, "0");
+  const TRUE = `0x${"0".repeat(63)}1`;
+  try {
+    const [t, c] = await Promise.all([
+      client.call({ to: factory, data: `${PONS_TESTNET_IS_TOKEN_SELECTOR}${word(token)}` as Hex }),
+      client.call({ to: factory, data: `${PONS_TESTNET_IS_CURVE_SELECTOR}${word(curve)}` as Hex }),
+    ]);
+    return t.data?.toLowerCase() === TRUE && c.data?.toLowerCase() === TRUE;
+  } catch {
+    return false;
+  }
+}
 
 const TESTNET_KNOWN_PONS_FACTORIES = new Set([
   PONS_TESTNET_CONTRACTS.launchRouter.toLowerCase(),
@@ -366,13 +484,14 @@ export async function evaluateTokenRiskRhc(params: {
       client.readContract({ address: curveHex, abi: PONS_V2_CURVE_ABI, functionName: "token" }).catch(() => null),
     ]);
 
-    const matchesToken = !curveTok || curveTok.toLowerCase() === addrLower;
-    if (
-      curveFactory &&
-      curveGraduated !== null &&
-      matchesToken &&
-      (TESTNET_KNOWN_PONS_FACTORIES.has(curveFactory.toLowerCase()) || curveTok?.toLowerCase() === addrLower)
-    ) {
+    // TR-1: getters on a curve are attacker-controlled. Require: the curve points back to this token, its
+    // factory is a known pons factory, AND that factory's registry confirms both token and curve.
+    const factoryConfirmed =
+      Boolean(curveFactory) &&
+      curveTok?.toLowerCase() === addrLower &&
+      TESTNET_KNOWN_PONS_FACTORIES.has(curveFactory!.toLowerCase()) &&
+      (await ponsTestnetFactoryConfirms(client, curveFactory as Hex, addr, curveHex));
+    if (curveFactory && curveGraduated !== null && factoryConfirmed) {
       const holders = await holdersPromise;
       const { result: metadataScan } = await scanContentWithRemoteUrl(
         config,
@@ -846,12 +965,23 @@ export async function evaluateTokenRiskRhc(params: {
           ? adminAddr
           : null;
 
-  const bytecodeLower = bytecode.toLowerCase();
+  // TR-2: scan the implementation too, and treat a live upgrade authority as live mint authority.
+  const proxy = await inspectProxy(client, addr, bytecode, effectiveOwner);
+  const bytecodeLower = `${bytecode}${proxy.implementationCode?.slice(2) ?? ""}`.toLowerCase();
   const hasMintOrFaucetSelector = MINT_SELECTORS_HEX.some((sel) => bytecodeLower.includes(sel));
+  const hasAccessControl = ACCESS_CONTROL_SELECTORS_HEX.some((sel) => bytecodeLower.includes(sel));
+  // TR-3: a mint function is only "dead" when ownership was provably renounced (owner()/getOwner() returned
+  // the zero address) and no role system exists. No owner getter at all proves nothing.
+  const ownershipRenounced =
+    effectiveOwner === null &&
+    (ownerAddr?.toLowerCase() === ZERO_ADDRESS || getOwnerAddr?.toLowerCase() === ZERO_ADDRESS) &&
+    !hasAccessControl;
   const hasLiveMinter =
-    Boolean(minterAddr && minterAddr !== "0x0000000000000000000000000000000000000000") ||
+    Boolean(minterAddr && minterAddr !== ZERO_ADDRESS) ||
     mintLockedState === false ||
-    (hasMintOrFaucetSelector && (effectiveOwner !== null || bytecodeLower.includes("de5f72fd")));
+    proxy.upgradeable ||
+    (hasMintOrFaucetSelector &&
+      (effectiveOwner !== null || bytecodeLower.includes("de5f72fd") || hasAccessControl || !ownershipRenounced));
 
   const { result: metadataScan } = await scanContentWithRemoteUrl(
     config,
@@ -900,11 +1030,22 @@ export async function evaluateTokenRiskRhc(params: {
     liquidity: {
       venue: "unknown",
       locked: null,
-      detail: { note: `Not a canonical RHC asset or pons launch on chain ${chainId}` },
+      detail: {
+        note: `Not a canonical RHC asset or pons launch on chain ${chainId}`,
+        ...(proxy.kind
+          ? {
+              proxy: proxy.kind,
+              implementation: proxy.implementation,
+              upgradeable: proxy.upgradeable,
+              upgradeAuthority: proxy.upgradeAuthority,
+            }
+          : {}),
+        ...(hasAccessControl ? { accessControl: true } : {}),
+      },
     },
     tax: { buyBps: null, sellBps: null, snipeTaxBps: null },
     authorities: {
-      owner: effectiveOwner,
+      owner: effectiveOwner ?? (proxy.upgradeable ? proxy.upgradeAuthority : null),
       mintable: hasLiveMinter,
       pausable: pausedState !== null ? true : null,
     },

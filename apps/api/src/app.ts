@@ -1127,7 +1127,13 @@ export function createZGuardApp(deps: AppDependencies = {}): {
               registry,
               chainId: targetRhcChainId,
               tokenAddress: derivedToken,
-              recipientForSnipeTax: body.options?.recipientForSnipeTax,
+              // TR-5: pons snipe tax depends on who receives the tokens; default to the actual buyer
+              // (intent recipient, then tx sender) instead of a placeholder address.
+              recipientForSnipeTax:
+                body.options?.recipientForSnipeTax ??
+                body.payload?.intent?.expectedOut?.recipient ??
+                (typeof body.payload?.tx === "object" ? body.payload.tx.from : undefined) ??
+                body.payload?.intent?.from,
             })
           : Promise.resolve(undefined),
         body.content || requestedChecks.includes("content")
