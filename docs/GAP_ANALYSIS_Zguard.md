@@ -113,7 +113,7 @@ Legenda: ✅ sesuai · 🟡 sebagian · ❌ belum ada · ⚠️ melanggar · ⚪
 | 3 | Simulasi swap v4 dan curve cocok dengan saldo onchain | ❌ | Tidak ada tx uji yang tercatat di repo |
 | 4 | Token risk membedakan jenis (sampel nyata) | 🟡 | Test testnet gagal di sini (jaringan) |
 | 5 | Perm/terminal tidak bisa menandatangani tanpa guard | ❌ | Tidak ada kode Perm/terminal di repo |
-| 6 | MCP `check_token` dan `guard_bundle` | 🟡 | 5 tool ada; bergantung API hidup |
+| 6 | MCP `check_token` dan `guard_bundle` | 🟡 | 5 tool ada; bergantung API hidup · update 2026-11-26: bug `check_token` deny `Q-005,S-FAIL` untuk semua token diperbaiki (MCP-1, `25d3f25`) |
 | 7 | Billing: kredit habis → 402 payable di 4663 | 🟡 | Kode ada; belum terbukti live |
 | 8 | Fail-closed saat API/RPC mati | ✅ | `client.ts` mengembalikan abstain; signer menolak |
 | 9 | Buyback tercatat | 🟡 | Config ada; sesuai brief (otomatis = Phase 2) |
@@ -586,9 +586,18 @@ Periksa satu per satu. Untuk tiap item tulis hasilnya (aman / ada bug + PoC) di 
 - [x] (sebagian dibaca, lihat Bagian J) `apps/api/src/db/store.ts` (810 baris) dan `drizzle/0000_init.sql`: potong kredit atomik (dua `/v1/guard` bersamaan), isolasi antar tenant (receipt dan attestation tenant lain bisa dibaca?), hash API key, nonce tabel.
 - [ ] `apps/api/src/services/token-risk.ts` (921 baris): akurasi klasifikasi `kind`, token ticker kembar, snipe tax, `T-LP` untuk pool v4 hasil graduasi, token `other` dengan mint tersembunyi (proxy/upgradeable), pembacaan owner untuk kontrak non-Ownable.
 - [ ] `apps/api/src/services/simulate.ts` (565 baris): swap v4 ber-hook, trade curve Pons, tx yang bergantung timestamp/blok, `S-DIFF` toleransi, simulasi tanpa `from` yang benar.
-- [ ] `apps/api/src/services/url-scanner.ts` (306 baris): SSRF lewat redirect, DNS rebinding, IPv6, `0.0.0.0`, port non-standar, batas ukuran dan timeout.
-- [ ] `packages/mcp/src/index.ts` dan `packages/sdk/src/cli.ts`: tool berjalan tanpa API key (offline), tidak mengirim data sensitif, skema respons sama dengan §5.3.
-- [ ] `packages/sdk/src/signer.ts`: semua jalur tanda tangan terbungkus (`signTypedData`, `signTransaction`, `sendTransaction`, `personal_sign`, `eth_sign`, `wallet_sendCalls`); pastikan tidak ada jalur yang lolos.
+- [x] ✅ **diperbaiki (2026-11-26).** `apps/api/src/services/url-scanner.ts` (306 baris): SSRF lewat redirect, DNS rebinding, IPv6, `0.0.0.0`, port non-standar, batas ukuran dan timeout.
+  Temuan: **[URL-1] DNS rebinding bisa** (validasi `dns.lookup`, lalu `fetch()` resolve ulang: PoC `127.0.0.1.nip.io` dengan jawaban publik pertama → server internal terkena 1 hit); [URL-2] timeout `fetch` tidak menutup body lambat; [URL-3] port 25/8443 dan `user:pass@` lolos; [URL-4] TEST-NET/benchmark (`192.0.2/24`, `198.18/15`, `203.0.113/24`) lolos, IPv6 hanya dicek dangkal (literal ber-bracket gagal tertutup di DNS, tidak tereksploitasi). Redirect sudah `manual` (aman).
+  Perbaikan: alamat divalidasi ulang di hook `lookup` socket (`createPinnedLookup`, kode `ESSRF` → `deny C-SSRF`); `safeFetch` (http/https, tanpa redirect, timeout total termasuk body, batas byte, `Accept-Encoding: identity`); hanya port 80/443, tanpa kredensial; parser IPv6 penuh (mapped, compatible, NAT64, 6to4, Teredo, doc, ULA, link/site-local, multicast).
+  Bukti: `url-scanner.ts` `safeFetch`/`createPinnedLookup`/`isPrivateOrReservedIp` · `apps/api/test/poc-url-scanner.test.ts` (58 kasus, di suite offline) · commit `a35d21b`, `78f8fe5` · `corepack pnpm test` 138/138 + 17/17 · live: `example.com` 200, `127.0.0.1.nip.io` → `ESSRF`.
+- [ ] 🟡 **sebagian (2026-11-26).** `packages/mcp/src/index.ts` dan `packages/sdk/src/cli.ts`: tool berjalan tanpa API key (offline), tidak mengirim data sensitif, skema respons sama dengan §5.3.
+  Temuan **[MCP-1] diperbaiki:** `check_token` dengan API key memanggil `POST /v1/guard` `checks:["token_risk"]`; server selalu menambah check wajib (quote + simulation, C4), jadi **semua token** (termasuk USDG kanonik) jadi `deny Q-005,S-FAIL` walau `token_risk` allow. Reproduksi pada app asli + RPC RHC: USDG 4663, USDG 46630, AAPL → deny; setelah fix → allow lewat `/v1/token-risk`.
+  Bukti: `packages/mcp/src/index.ts` `check_token` · `apps/api/test/poc-mcp.test.ts` (merah 0/2 di kode lama, hijau 2/2) · commit `25d3f25`, `383543c` · `corepack pnpm test` 138/138 + 17/17.
+  Sisa: tool lain dan `cli.ts` belum dibaca penuh.
+- [x] ✅ **diperbaiki (2026-11-26), dengan catatan terbuka.** `packages/sdk/src/signer.ts`: semua jalur tanda tangan terbungkus (`signTypedData`, `signTransaction`, `sendTransaction`, `personal_sign`, `eth_sign`, `wallet_sendCalls`); pastikan tidak ada jalur yang lolos.
+  Temuan diperbaiki: [SIG-1] field tx di luar yang dievaluasi (`authorizationList`, blob, `input`≠`data`, tipe 7702/4844) ikut ditandatangani; [SIG-2] `chainId` tx / `chain.id` viem / domain EIP-712 tidak diikat ke `network`; [SIG-3] objek tx/typed data bisa diubah setelah verdict (TOCTOU); [SIG-4] `signEip3009Authorization` menerima `primaryType` lain; [SIG-5] integrasi Perm/terminal gagal pada wallet tanpa `sendTransaction`. Wrapper hanya mengekspos jalur yang dijaga (tidak ada `personal_sign`/`eth_sign`/`wallet_sendCalls` mentah).
+  Bukti: `signer.ts` `ALLOWED_TX_KEYS`/`snapshot`/`assertDomainChain`, `integrations.ts` · `apps/api/test/poc-signer.test.ts` (13 merah di kode lama, 15/15 hijau) · commit `811ff6e`, `a5afd27`, `8596012`.
+  Terbuka (belum diperbaiki, dicatat): (a) `authorization.domain` (`verifyingContract`, `name`) tidak masuk hash kanonik (`pickCanonicalPayload`), hanya chainId dicek runtime; perbaikan mengubah hash sehingga butuh sinkron dengan `canonicalQuoteAndTxJson` + guest zk. (b) typed data non-3009 dengan intent → payload `{type:"intent"}`; `ctx.receipt` yang disuplai pemanggil mengizinkan typed data apa pun (opsi receipt didokumentasikan: jangan pernah dari sumber tak tepercaya). (c) `verifyReceiptForSigning` tidak mengecek `receipt.network`. (d) jalur override abstain tanpa TTL.
 - [ ] `packages/sdk/src/content-scan.ts`: prompt injection lewat metadata token, karakter tak terlihat, homoglyph, ticker lookalike terhadap registri Stock Token.
 - [x] Web `Docs`, `Architecture`, `Checks`, `Faq`, `Api`: bandingkan setiap klaim dengan perilaku nyata; hapus yang belum benar (zk, Perm/terminal default-on, latensi).
   Bukti: klaim zk (Api/Faq/Docs/Home/Zk) dan Perm/terminal default-on (Home/Docs) disesuaikan; billing Docs menjelaskan mode onchain/deposit · commit `309fec6`, `6a90158`, `e2c8326` · Architecture/Checks tidak memuat klaim zk/Perm.
@@ -724,7 +733,7 @@ Urutan wajib. Tiap tahap dicatat di dokumen ini.
 > **Bukti:** 9 PoC lokal di `apps/api/test/poc-*.test.ts`. Aturan PoC: **test yang LULUS berarti celahnya ADA.** Setelah diperbaiki, balik assertion-nya dan ubah nama tanpa tag `[GAP]`. Semua PoC hanya lokal (belum di-commit).
 > Perintah: `cd apps/api && npx tsx --test test/poc-quote-match.test.ts test/poc-x402.test.ts test/poc-store.test.ts`
 > **Catatan lapisan:** PoC QM menguji cek quote-match saja. Di `/v1/guard` cek simulasi mungkin menangkap sebagian (misal `S-DIFF`), tetapi cek quote tidak boleh bergantung pada itu.
-> **Belum dibaca di jalur ini:** `token-risk.ts`, `simulate.ts`, `url-scanner.ts`, MCP, signer, content-scan (tetap di Bagian I5).
+> **Belum dibaca di jalur ini:** `token-risk.ts`, `simulate.ts`, `url-scanner.ts`, MCP, signer, content-scan (tetap di Bagian I5). Update 2026-11-26: signer, `url-scanner.ts` dan MCP `check_token` sudah (lihat I5).
 
 ## Ringkasan
 | # | Temuan | Seberapa serius | Bukti |
