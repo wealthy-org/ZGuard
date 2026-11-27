@@ -1,11 +1,21 @@
 [package]
 name = "zguard-halo2-quote-circuit"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "Apache-2.0"
-description = "Hand-written PSE Halo2-KZG circuit for ZGuard quote-match parity on BN254"
+description = "PSE Halo2-KZG (BN254, SHPLONK) circuit for ZGuard quote-match on the eip3009 rail, with a generated Solidity verifier"
 
 [dependencies]
 halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2.git", tag = "v0.3.0" }
-halo2curves = "0.6.1"
-ff = "0.13"
+halo2_solidity_verifier = { git = "https://github.com/privacy-scaling-explorations/halo2-solidity-verifier.git", rev = "9e99730a12f9203d46d9b056662440de2d305ca8" }
+rand = "0.8"
+serde_json = "1"
+hex = "0.4"
+sha2 = "0.10"
+zguard-quote-rules = { path = "../quote-rules" }
+
+[profile.release]
+opt-level = 3
+
+[profile.dev]
+opt-level = 1
