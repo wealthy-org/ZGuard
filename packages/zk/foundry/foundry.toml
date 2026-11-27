@@ -6,8 +6,11 @@ cache_path = "cache"
 libs = []
 solc_version = "0.8.28"
 evm_version = "paris"
-via_ir = true
+# Legacy pipeline: the generated Halo2Verifier (hand-scheduled assembly, upstream builds it with
+# `solc --optimize`) hits stack-too-deep under via-IR.
+via_ir = false
 optimizer = true
 optimizer_runs = 200
 allow_paths = ["../contracts"]
 remappings = ["zguard/=../contracts/"]
+fs_permissions = [{ access = "read", path = "../fixtures" }]
