@@ -99,7 +99,7 @@ Legenda: ✅ sesuai · 🟡 sebagian · ❌ belum ada · ⚠️ melanggar · ⚪
 | Aturan di brief | Status | Catatan |
 |---|---|---|
 | Groth16 via SP1/RISC Zero, verifier di 4663 | ❌ | Guest Rust ada (111 baris); tidak ada pipeline prover, tidak ada kontrak yang ter-deploy (C2) |
-| Halo2-KZG + verifier Solidity via snark-verifier | ❌ | Hanya `lib.rs` 130 baris; tidak ada prover, tidak ada verifier (C2) |
+| Halo2-KZG + verifier Solidity via snark-verifier | ❌ → 🟡 | Hanya `lib.rs` 130 baris; tidak ada prover, tidak ada verifier (C2). **Update 2026-11-27:** sirkuit + prover + verifier Solidity (generator PSE `halo2-solidity-verifier`) selesai dan diuji di CI; belum deploy (lihat H7) |
 | Dua jalur, public input sama | ❌ | Belum ada kedua-duanya yang nyata |
 | `attestation.zk.scope = "quote"` | ✅ | Dikunci di kontrak dan kode |
 | `GET /v1/attestation/{id}` | ✅ | Route ada |
@@ -145,7 +145,7 @@ Hapus klaim "Groth16"/"verified" untuk Path B. Pakai verifier SP1 gateway asli (
 Event "verified" hanya muncul kalau ada proof yang tidak bisa dipalsukan. Klaim di web dan README sesuai kenyataan.
 
 ## C2. SP1 dan Halo2 hanya kerangka; verifier tidak ter-deploy 🔴 · *dari kode + env*
-> **Status: 🟡 sebagian.** Bagian yang bisa dikerjakan tanpa infra sudah selesai: crate `packages/zk/quote-rules` (`no_std`, dipakai guest) dengan vektor lintas bahasa yang byte-identik dengan TS `encodeQuotePublicValues`; guest SP1 meng-commit komitmen yang sama; `buildSp1GuestInput` di `packages/zk/src/index.ts`; Halo2 diberi label skeleton dan dimatikan default (`ZGUARD_ZK_HALO2_ENABLED=false`); API mengembalikan `pending` + `note` jujur. **Update 2026-11-27:** `cargo prove build` ✅ dan `programVKey` ✅ (lihat H2, run `45785975447`). **Belum:** proof Groth16, deploy verifier/gateway di 46630, dan `verifyTx`. Semuanya butuh toolchain SP1, prover network (`NETWORK_PRIVATE_KEY`) dan wallet deploy.
+> **Status: 🟡 sebagian.** Bagian yang bisa dikerjakan tanpa infra sudah selesai: crate `packages/zk/quote-rules` (`no_std`, dipakai guest) dengan vektor lintas bahasa yang byte-identik dengan TS `encodeQuotePublicValues`; guest SP1 meng-commit komitmen yang sama; `buildSp1GuestInput` di `packages/zk/src/index.ts`; Halo2 diberi label skeleton dan dimatikan default (`ZGUARD_ZK_HALO2_ENABLED=false`); API mengembalikan `pending` + `note` jujur. **Update 2026-11-27:** `cargo prove build` ✅ dan `programVKey` ✅ (lihat H2, run `45785975447`). **Belum:** proof Groth16, deploy verifier/gateway di 46630, dan `verifyTx`. **Update Halo2 2026-11-27:** prover + verifier Solidity Halo2 ✅ di kode dan CI (lihat H7); deploy belum. Semuanya butuh toolchain SP1, prover network (`NETWORK_PRIVATE_KEY`) dan wallet deploy.
 > Bukti: `cd packages/zk/quote-rules && cargo test` · 5/5 lulus (vektor quoteHash `0x00cfe0ab…c86366`) · live: `POST /v1/verify` fixture allow/deny Q-001 → attestation `pending`, note "SP1 prover not configured…" · commit `375ff65`, `56e69cf`
 
 **Masalahnya apa**
@@ -525,6 +525,10 @@ User tiba di Console, langsung melihat Connect Wallet di atas, terhubung dalam s
 | CI | `cargo prove build` + test offline + typecheck pada setiap PR; test yang butuh prover network ditandai terpisah |
 
 ## H7. Halo2-KZG (target, bukan syarat rilis)
+> **Status (2026-11-27): ✅ sirkuit + prover + verifier Solidity selesai dan diuji (belum deploy).** PSE halo2_proofs v0.3.0, k=13, SHPLONK, transcript Keccak; verifier Solidity dihasilkan oleh PSE `halo2-solidity-verifier@9e99730` (bukan `snark-verifier`; satu kontrak, VK tertanam, 9,5 KB). SRS = setup Axiom turunan Perpetual Powers of Tau (challenge 0085), di-pin sha256 + cek pairing; `ParamsKZG::setup` tidak dipakai.
+> **Yang dibuktikan:** byte JSON kanonik quote/tx (yang di-hash SDK) menjadi public input (potongan 31 byte); setiap byte dicek terhadap automat bentuk kanonik eip3009 lewat lookup, lalu `payTo` vs `authorization.to` (Q-001) dan `amount` vs `value` (Q-002) dibandingkan dari posisi aslinya. Q-003/Q-004/Q-006 dan Q-007 tetap hint privat, sama persis dengan guest SP1. Kontrak wrapper menghitung `keccak256` di EVM dan mengembalikan public values 160 byte yang sama dengan SP1 → **public input sama dengan jalur SP1**.
+> **Batas jujur:** Q-005, Q-DECODE dan rail selain eip3009 tidak punya proof Halo2 (tetap jalur SP1); JSON quote/tx terlihat di calldata; generator verifier belum diaudit; API belum menjalankan prover dan kontrak belum di-deploy (`ZGUARD_ZK_HALO2_ENABLED=false`, attestation tetap `pending`).
+> Bukti: `packages/zk/halo2-quote-circuit` (`src/template.rs` DFA JSON kanonik, `src/lib.rs` `QuoteCircuit`, `src/prover.rs`, `src/bin/zguard-halo2.rs`), `packages/zk/contracts/Halo2QuoteVerifier.sol` (hasil generator) + `ZGuardHalo2QuoteVerifier.sol`, `packages/zk/foundry/test/ZGuardHalo2QuoteVerifier.t.sol`, `.github/workflows/halo2.yml` · `ZGUARD_HALO2_REQUIRE_SRS=1 cargo test --locked --release` → 6/6 lulus (MockProver paritas dengan `quote-rules` pada fixture bersama + edge case, tolak verdict/mask/byte palsu, proof KZG asli) · `zguard-halo2 verifier` dua kali → sha256 identik `b601f40f…463d` · `forge test -vv` → 14/14 (7 Halo2 dengan proof asli: 5 fixture lolos, verdict/mask/JSON/proof salah dan NUL di akhir revert; `verifyProof` ~452k gas, `verifyQuote` ~483k gas) · commit `01cb33d`, `7681219`, `a5b3fee`, `620891c`, `4a8e174`
 Sesuai brief §8.3: jika belum selesai, rilis dengan Groth16 saja dan marketing hanya menyebut Groth16. Kerjakan hanya setelah H1-H6 hijau. Butuh prover, verifier Solidity via `snark-verifier`, dan public input yang sama dengan jalur SP1.
 
 ## H8. Aturan komunikasi sampai semua hijau
@@ -570,6 +574,8 @@ Sesuai brief §8.3: jika belum selesai, rilis dengan Groth16 saja dan marketing 
   Bukti: `README.md` (tabel "What is real and what is not yet"), `ZkPage.tsx`, `ApiPage.tsx` (zk system = "in progress"), `FaqPage.tsx`, `DocsPage.tsx`, `HomePage.tsx` · `grep -i "simulated via\|proof generated\|snark-verifier"` di views: hanya tersisa deskripsi target Halo2 berlabel skeleton · commit `aba2ded`, `309fec6`, `56e69cf` · **X (Twitter) di luar repo: user yang menghapus**
 - [x] Halo2-KZG: setelah H1-H6 hijau, atau nyatakan belum ada.
   Bukti: dinyatakan belum ada: README, web ("Skeleton · not available"), `config.ts` `zkHalo2Enabled` default `false` · commit `56e69cf`
+  **Update 2026-11-27: Halo2 sekarang ada** (sirkuit + prover + verifier Solidity, belum deploy). Label web diganti "circuit + verifier in CI · not deployed".
+  Bukti: `packages/zk/halo2-quote-circuit` (`src/template.rs` DFA JSON kanonik, `src/lib.rs` `QuoteCircuit`, `src/prover.rs`, `src/bin/zguard-halo2.rs`), `packages/zk/contracts/Halo2QuoteVerifier.sol` (hasil generator) + `ZGuardHalo2QuoteVerifier.sol`, `packages/zk/foundry/test/ZGuardHalo2QuoteVerifier.t.sol`, `.github/workflows/halo2.yml` · `ZGUARD_HALO2_REQUIRE_SRS=1 cargo test --locked --release` → 6/6 lulus (MockProver paritas dengan `quote-rules` pada fixture bersama + edge case, tolak verdict/mask/byte palsu, proof KZG asli) · `zguard-halo2 verifier` dua kali → sha256 identik `b601f40f…463d` · `forge test -vv` → 14/14 (7 Halo2 dengan proof asli: 5 fixture lolos, verdict/mask/JSON/proof salah dan NUL di akhir revert; `verifyProof` ~452k gas, `verifyQuote` ~483k gas) · commit `01cb33d`, `7681219`, `a5b3fee`, `620891c`, `4a8e174`
 
 ## I4. Kepatuhan brief yang belum ada bukti
 - [ ] ⏸ **DITUNDA (mainnet, setelah testnet hijau)** §9.1 dump JSON `/v1/guard` di **mainnet 4663** untuk swap USDG atau Stock Token.
