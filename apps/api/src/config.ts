@@ -321,7 +321,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ZGuardAppConfi
       env.ZGUARD_ZK_SYSTEM === "groth16-risc0" || env.ZGUARD_ZK_SYSTEM === "halo2-kzg"
         ? env.ZGUARD_ZK_SYSTEM
         : "groth16-sp1",
-    // Halo2 is a skeleton (no prover/verifier): opt-in only, and still yields `pending` (gap C2/C9).
+    // Halo2 circuit + prover CLI + generated verifier exist (CI), but the API runs no prover and no verifier is
+    // deployed: opt-in only, and still yields `pending` (gap C2/C9/H7).
     zkHalo2Enabled: env.ZGUARD_ZK_HALO2_ENABLED === "true",
     zkSp1ProverUrl: env.ZGUARD_ZK_SP1_PROVER_URL || null,
     zkVerifierAddress: env.ZGUARD_ZK_VERIFIER_ADDRESS || null,

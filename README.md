@@ -44,7 +44,7 @@ or the guard is disabled (`GuardDisabledError`).
 | ZK verifier contract `ZGuardQuoteVerifier.sol` | Accepts only SP1 gateway proofs. Config changes go through a 2-day timelock; ownership transfer is two-step. **Not deployed** | `forge test` (7 tests; fake proofs revert) |
 | ZK rule engine `packages/zk/quote-rules` | Rust `no_std`. Its public values are byte-identical to the TypeScript SDK | `cargo test` (5 tests) |
 | SP1 guest `packages/zk/sp1-quote-guest` | **Scaffold.** It has not been built with `cargo prove build`, has no vkey and no prover service | — |
-| Halo2 circuit `packages/zk/halo2-quote-circuit` | **Skeleton.** It has no prover, verifier or tests. Disabled by default (`ZGUARD_ZK_HALO2_ENABLED=false`) | — |
+| Halo2 circuit `packages/zk/halo2-quote-circuit` | **Circuit + prover + Solidity verifier, not deployed.** PSE Halo2-KZG (k=13, SHPLONK) over the canonical eip3009 quote/tx JSON; proves Q-001/Q-002, hints Q-003/4/6/7 like SP1, same public values. `Halo2QuoteVerifier.sol` is generated (CI diffs it), `ZGuardHalo2QuoteVerifier.sol` wraps it (~483k gas). Q-005/Q-DECODE stay SP1-only. The API does not run the prover; `ZGUARD_ZK_HALO2_ENABLED=false` | `.github/workflows/halo2.yml`: `cargo test` (MockProver + real KZG proof), verifier diff, `forge test --match-contract Halo2` |
 | ZK attestations from the API | Stay `pending` until a prover URL, a vkey and a verifier are configured. `verified` is set only from a `verifySp1QuoteProof` receipt | `zk-honesty.test.ts` |
 | Browser wallet in the web app | Connect uses `eth_requestAccounts` + `wallet_switchEthereumChain` only; nothing is signed on connect | `apps/web/test/wallet.test.ts` |
 
@@ -60,7 +60,7 @@ apps/api    Hono /v1/* server (Vercel function) + Neon Postgres + x402 USDG bill
 packages/sdk  quote-match, signer wrapper, client, CLI, Perm/Terminal helpers
 packages/mcp  MCP stdio server
 packages/terminal  zguard-terminal: local pons curve terminal, ZGuard-guarded before every signature
-packages/zk   ZGuardQuoteVerifier.sol + Foundry tests, quote-rules crate, SP1 guest (built in CI, vkey pinned), Halo2 skeleton
+packages/zk   ZGuardQuoteVerifier.sol + Foundry tests, quote-rules crate, SP1 guest (built in CI, vkey pinned), Halo2 circuit + prover CLI + generated verifier
 ```
 
 ## Quickstart

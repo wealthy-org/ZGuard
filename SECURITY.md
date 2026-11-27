@@ -13,7 +13,7 @@ ZGuard is a pre-signature guard for agents and terminals on Robinhood Chain. The
 | SDK: quote-match, signer wrapper, client, CLI | `packages/sdk` | ✅ |
 | MCP server | `packages/mcp` | ✅ |
 | Local trading terminal `zguard-terminal` | `packages/terminal` | ✅ |
-| zk: SP1 guest, quote rules, `ZGuardQuoteVerifier.sol`, Halo2 circuit | `packages/zk` | ✅ (contract not deployed) |
+| zk: SP1 guest, quote rules, `ZGuardQuoteVerifier.sol`, Halo2 circuit + `ZGuardHalo2QuoteVerifier.sol` (generated `Halo2QuoteVerifier.sol` comes from the unaudited PSE halo2-solidity-verifier) | `packages/zk` | ✅ (contracts not deployed) |
 
 Only `main` is supported.
 
