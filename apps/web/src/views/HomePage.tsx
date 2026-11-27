@@ -148,7 +148,7 @@ const MARQUEE = [
   'PoolManager · 0x8366…0951',
   'pons V2 factory · 0x7eD5…EC7e',
   'Groth16 · BN254',
-  'Halo2-KZG (skeleton)',
+  'Halo2-KZG · eip3009 circuit',
   'x402 · USDG billing',
   'allow · deny · abstain',
   'Perm · Terminal · MCP',
@@ -541,7 +541,7 @@ function ZkTeaser({ navigate }: { navigate: Navigate }) {
               never simulation or token risk, and carries commitments instead of your intent.
             </p>
             <div className="mt-6 flex flex-wrap gap-2">
-              {['scope: "quote"', 'Groth16 · BN254', 'Halo2-KZG · skeleton', 'commitment hashes'].map((t) => (
+              {['scope: "quote"', 'Groth16 · BN254', 'Halo2-KZG · verifier generated', 'commitment hashes'].map((t) => (
                 <span key={t} className="rounded-full border border-white/15 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-zinc-300">
                   {t}
                 </span>

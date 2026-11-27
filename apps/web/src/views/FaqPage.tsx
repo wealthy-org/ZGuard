@@ -37,7 +37,7 @@ const FAQ = [
   },
   {
     q: 'What does the zk layer prove?',
-    a: 'Only quote-match. The design is Groth16 via SP1: a Rust rule engine runs in a zkVM and the proof is checked by ZGuardQuoteVerifier on testnet 46630. Today the SP1 guest is a scaffold and no prover or verifier is deployed, so attestations stay pending. Halo2-KZG is only a skeleton. Public outputs are commitments: quoteHash, txHash, verdict and ruleCodes. Simulation and token risk are never proven, and proofs arrive asynchronously.',
+    a: 'Only quote-match. The design is Groth16 via SP1: a Rust rule engine runs in a zkVM and the proof is checked by ZGuardQuoteVerifier on testnet 46630. Today the SP1 guest is a scaffold and no prover or verifier is deployed, so attestations stay pending. A Halo2-KZG circuit with a generated Solidity verifier is tested in CI for the eip3009 rail but is not deployed either. Public outputs are commitments: quoteHash, txHash, verdict and ruleCodes. Simulation and token risk are never proven, and proofs arrive asynchronously.',
   },
   {
     q: 'Is Wormbook part of ZGuard?',

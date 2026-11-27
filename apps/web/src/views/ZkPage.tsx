@@ -160,9 +160,9 @@ export function ZkPage() {
               {
                 icon: CircuitBoard,
                 name: 'Halo2 · KZG',
-                badge: 'Skeleton · not available',
-                tone: 'border-white/20 text-zinc-500',
-                desc: 'A hand-written circuit skeleton. It has no prover, no verifier and no tests, and is not offered by the API.',
+                badge: 'Circuit + verifier · not deployed',
+                tone: 'border-amber-400/50 text-amber-200',
+                desc: 'PSE Halo2-KZG circuit for the eip3009 rail (packages/zk/halo2-quote-circuit): the canonical quote/tx JSON bytes are public inputs, the circuit proves Q-001 and Q-002 and returns the same public values as SP1. Prover CLI, generated Solidity verifier and Foundry tests with real proofs run in CI. Not deployed and not offered by the API yet.',
               },
             ].map((s) => {
               const Icon = s.icon;
