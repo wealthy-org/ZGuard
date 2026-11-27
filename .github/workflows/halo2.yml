@@ -1,0 +1,72 @@
+name: Halo2 quote circuit
+
+# Gap H7 / brief §8.3 path 2: PSE Halo2-KZG circuit for quote-match (eip3009).
+#  1. native tests: MockProver parity with zguard-quote-rules on the shared fixtures + a real KZG proof
+#     with the pinned PPoT-derived SRS;
+#  2. the committed Solidity verifier must be exactly what the circuit generates (no hand edits, no drift);
+#  3. fresh proofs for every covered fixture, then Foundry verifies them on the EVM through the wrapper.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/zk/**"
+      - ".github/workflows/halo2.yml"
+  pull_request:
+    paths:
+      - "packages/zk/**"
+      - ".github/workflows/halo2.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: halo2-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  ZGUARD_HALO2_REQUIRE_SRS: "1"
+
+jobs:
+  halo2:
+    name: MockProver parity · KZG proof · generated verifier · EVM verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/zk/halo2-quote-circuit
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Fetch pinned SRS (sha256-checked)
+        run: packages/zk/scripts/fetch-halo2-srs.sh
+
+      - name: cargo test (MockProver parity + real KZG proof)
+        working-directory: packages/zk/halo2-quote-circuit
+        run: cargo test --locked --release
+
+      - name: Committed Halo2QuoteVerifier.sol == generated
+        working-directory: packages/zk/halo2-quote-circuit
+        run: |
+          cargo run --locked --release --bin zguard-halo2 -- verifier "$RUNNER_TEMP/Halo2QuoteVerifier.sol"
+          diff -u ../contracts/Halo2QuoteVerifier.sol "$RUNNER_TEMP/Halo2QuoteVerifier.sol"
+
+      - name: forge test (committed proofs)
+        working-directory: packages/zk/foundry
+        run: forge test -vv --match-contract Halo2
+
+      - name: Fresh proofs for every fixture, then forge test again
+        run: |
+          cd packages/zk/halo2-quote-circuit
+          cargo run --locked --release --bin zguard-halo2 -- prove-fixtures ../fixtures/sp1-quote-fixtures.json ../fixtures/halo2-quote-proofs.json
+          cd ../foundry
+          forge test -vv --match-contract Halo2
