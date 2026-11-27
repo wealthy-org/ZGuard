@@ -1,0 +1,315 @@
+{
+  "chainId": 4663,
+  "generatedAt": "2026-11-23T05:37:34.096Z",
+  "block": 121179391,
+  "amountInWei": "1000000000000000",
+  "hub": {
+    "symbol": "USDG",
+    "address": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+    "decimals": 6,
+    "ethLegFee": 100,
+    "ethLegUsdgOut": "1726543"
+  },
+  "admission": {
+    "maxRoundTripLossBps": 100
+  },
+  "v2": {
+    "factory": "0x8bceaa40b9acdfaedf85adf4ff01f5ad6517937f",
+    "wethUsdg": {
+      "pair": "0x8803c117ccae7B5146297876c2A25DF135141C4d",
+      "wethReserve": "94.138999834551226514",
+      "usdgReserve": "162552.597947",
+      "roundTripLossBps": 60
+    }
+  },
+  "tokens": [
+    {
+      "symbol": "NVDA",
+      "address": "0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC",
+      "hubRoute": {
+        "path": "ETH \u2192(v3 0.01%) USDG \u2192(v3 0.05%) NVDA",
+        "leg1Fee": 100,
+        "leg2Fee": 500,
+        "tokenOut": "12813721638612162",
+        "roundTripLossBps": 12,
+        "gasEstimate": "209661",
+        "admitted": true
+      },
+      "v2": {
+        "weth": {
+          "pair": "0x2f358Bb14dAEFF19Dd21782aFFC86171462E11B9",
+          "wethReserve": "0.000011219810390891",
+          "roundTripLossBps": 10000
+        },
+        "usdg": {
+          "pair": "0xeE6F200063a53Fe9450578d99c0F8eAD4952c97a",
+          "usdgReserve": "0.148474"
+        }
+      }
+    },
+    {
+      "symbol": "AAPL",
+      "address": "0xaF3D76f1834A1d425780943C99Ea8A608f8a93f9",
+      "hubRoute": {
+        "path": "ETH \u2192(v3 0.01%) USDG \u2192(v3 0.05%) AAPL",
+        "leg1Fee": 100,
+        "leg2Fee": 500,
+        "tokenOut": "4963070210939382",
+        "roundTripLossBps": 13,
+        "gasEstimate": "208547",
+        "admitted": true
+      },
+      "v2": {
+        "weth": {
+          "pair": "0x9C45B26C45cAbfEEf9718B986fEbd228EC9a8354",
+          "wethReserve": "0.000006177136196534",
+          "roundTripLossBps": 10000
+        },
+        "usdg": {
+          "pair": "0xd0bBF7DF4e357eb3D6276df5A5903bD42bBF3647",
+          "usdgReserve": "0.009107"
+        }
+      }
+    },
+    {
+      "symbol": "TSLA",
+      "address": "0x322F0929c4625eD5bAd873c95208D54E1c003b2d",
+      "hubRoute": {
+        "path": "ETH \u2192(v3 0.01%) USDG \u2192(v3 0.05%) TSLA",
+        "leg1Fee": 100,
+        "leg2Fee": 500,
+        "tokenOut": "4807830638337721",
+        "roundTripLossBps": 12,
+        "gasEstimate": "218793",
+        "admitted": true
+      },
+      "v2": {
+        "weth": {
+          "pair": "0xF611212A85b402Aef0825e547c570f90A8c200e0",
+          "wethReserve": "0.000004871506042031",
+          "roundTripLossBps": 10000
+        },
+        "usdg": {
+          "pair": "0x30804c611286A1B19FaBDe3a4e55693aB861214A",
+          "usdgReserve": "3.538626"
+        }
+      }
+    },
+    {
+      "symbol": "AMZN",
+      "address": "0x12f190a9F9d7D37a250758b26824B97CE941bF54",
+      "hubRoute": {
+        "path": "ETH \u2192(v3 0.01%) USDG \u2192(v3 0.3%) AMZN",
+        "leg1Fee": 100,
+        "leg2Fee": 3000,
+        "tokenOut": "6752339788686727",
+        "roundTripLossBps": 63,
+        "gasEstimate": "211160",
+        "admitted": true
+      },
+      "v2": {
+        "weth": {
+          "pair": "0xC6723798b4c7fDA5C00c8fBA7e66232898C5d1bC",
+          "wethReserve": "0.000076409740085898",
+          "roundTripLossBps": 10000
+        },
+        "usdg": {
+          "pair": "0xF6C8A75149ef46AE92901d48eB78805F739E0768",
+          "usdgReserve": "0.000001"
+        }
+      }
+    },
+    {
+      "symbol": "SPCX",
+      "address": "0x4a0E65A3EcceC6dBe60AE065F2e7bb85Fae35eEa",
+      "hubRoute": {
+        "path": "ETH \u2192(v3 0.01%) USDG \u2192(v3 0.05%) SPCX",
+        "leg1Fee": 100,
+        "leg2Fee": 500,
+        "tokenOut": "13121747422746457",
+        "roundTripLossBps": 12,
+        "gasEstimate": "210195",
+        "admitted": true
+      },
+      "v2": {
+        "weth": {
+          "pair": "0x5d5A3f7232ceF9788ef231712303Ec19dB2d5573",
+          "wethReserve": "0.000046129360915163",
+          "roundTripLossBps": 10000
+        },
+        "usdg": {
+          "pair": "0x391b927EF44371f6c7F2AF799d9a9CB1b9F6b075",
+          "usdgReserve": "0.000001"
+        }
+      }
+    },
+    {
+      "symbol": "PLTR",
+      "address": "0x894E1EC2D74FFE5AEF8Dc8A9e84686acCB964F2A",
+      "hubRoute": {
+        "path": "ETH \u2192(v3 0.01%) USDG \u2192(v3 0.3%) PLTR",
+        "leg1Fee": 100,
+        "leg2Fee": 3000,
+        "tokenOut": "11551853906681233",
+        "roundTripLossBps": 61,
+        "gasEstimate": "211675",
+        "admitted": true
+      },
+      "v2": {
+        "weth": null,
+        "usdg": null
+      }
+    },
+    {
+      "symbol": "NFLX",
+      "address": "0xE0444EF8BF4eD74f74FD73686e2ddF4C1c5591E8",
+      "hubRoute": {
+        "path": "ETH \u2192(v3 0.01%) USDG \u2192(v3 0.3%) NFLX",
+        "leg1Fee": 100,
+        "leg2Fee": 3000,
+        "tokenOut": "29963302521166455",
+        "roundTripLossBps": 61,
+        "gasEstimate": "209945",
+        "admitted": true
+      },
+      "v2": {
+        "weth": null,
+        "usdg": null
+      }
+    },
+    {
+      "symbol": "AMD",
+      "address": "0x86923f96303D656E4aa86D9d42D1e57ad2023fdC",
+      "hubRoute": {
+        "path": "ETH \u2192(v3 0.01%) USDG \u2192(v3 1%) AMD",
+        "leg1Fee": 100,
+        "leg2Fee": 10000,
+        "tokenOut": "3844509056203667",
+        "roundTripLossBps": 206,
+        "gasEstimate": "219878",
+        "admitted": false
+      },
+      "v2": {
+        "weth": null,
+        "usdg": null
+      }
+    },
+    {
+      "symbol": "MSFT",
+      "address": "0xe93237C50D904957Cf27E7B1133b510C669c2e74",
+      "hubRoute": {
+        "path": "ETH \u2192(v3 0.01%) USDG \u2192(v3 0.3%) MSFT",
+        "leg1Fee": 100,
+        "leg2Fee": 3000,
+        "tokenOut": "3451602438145954",
+        "roundTripLossBps": 61,
+        "gasEstimate": "218231",
+        "admitted": true
+      },
+      "v2": {
+        "weth": {
+          "pair": "0x79128f6d6FF4aFF600e743a7dbC5a282E91b2099",
+          "wethReserve": "0.000167584090799457",
+          "roundTripLossBps": 10000
+        },
+        "usdg": null
+      }
+    },
+    {
+      "symbol": "GOOGL",
+      "address": "0x2e0847E8910a9732eB3fb1bb4b70a580ADAD4FE3",
+      "hubRoute": {
+        "path": "ETH \u2192(v3 0.01%) USDG \u2192(v3 0.05%) GOOGL",
+        "leg1Fee": 100,
+        "leg2Fee": 500,
+        "tokenOut": "6290126704464056",
+        "roundTripLossBps": 12,
+        "gasEstimate": "208999",
+        "admitted": true
+      },
+      "v2": {
+        "weth": null,
+        "usdg": null
+      }
+    },
+    {
+      "symbol": "META",
+      "address": "0xc0D6457C16Cc70d6790Dd43521C899C87ce02f35",
+      "hubRoute": {
+        "path": "ETH \u2192(v3 0.01%) USDG \u2192(v3 0.05%) META",
+        "leg1Fee": 100,
+        "leg2Fee": 500,
+        "tokenOut": "2984725963517785",
+        "roundTripLossBps": 14,
+        "gasEstimate": "209531",
+        "admitted": true
+      },
+      "v2": {
+        "weth": {
+          "pair": "0x858A5FBeEb2DbDb5aFC83183789E2c722F79558c",
+          "wethReserve": "0.001014192938807123",
+          "roundTripLossBps": 9964
+        },
+        "usdg": null
+      }
+    },
+    {
+      "symbol": "SPY",
+      "address": "0x117cc2133c37B721F49dE2A7a74833232B3B4C0C",
+      "hubRoute": {
+        "path": "ETH \u2192(v3 0.01%) USDG \u2192(v3 0.05%) SPY",
+        "leg1Fee": 100,
+        "leg2Fee": 500,
+        "tokenOut": "2444681237015850",
+        "roundTripLossBps": 12,
+        "gasEstimate": "209064",
+        "admitted": true
+      },
+      "v2": {
+        "weth": null,
+        "usdg": {
+          "pair": "0xE59087890579AfEC2CC316c7Db230B2d0945569F",
+          "usdgReserve": "4813.240353"
+        }
+      }
+    },
+    {
+      "symbol": "QQQ",
+      "address": "0xD5f3879160bc7c32ebb4dC785F8a4F505888de68",
+      "hubRoute": {
+        "path": "ETH \u2192(v3 0.01%) USDG \u2192(v3 0.05%) QQQ",
+        "leg1Fee": 100,
+        "leg2Fee": 500,
+        "tokenOut": "2747370776313337",
+        "roundTripLossBps": 12,
+        "gasEstimate": "209569",
+        "admitted": true
+      },
+      "v2": {
+        "weth": {
+          "pair": "0xADfd0290D9b4AD157b6FE41Fc6D42Aa7944728d8",
+          "wethReserve": "0.000000000873585481",
+          "roundTripLossBps": 10000
+        },
+        "usdg": null
+      }
+    },
+    {
+      "symbol": "COIN",
+      "address": "0x6330D8C3178a418788dF01a47479c0ce7CCF450b",
+      "hubRoute": {
+        "path": "ETH \u2192(v3 0.01%) USDG \u2192(v3 0.05%) COIN",
+        "leg1Fee": 100,
+        "leg2Fee": 500,
+        "tokenOut": "16163394155500832",
+        "roundTripLossBps": 12,
+        "gasEstimate": "217185",
+        "admitted": true
+      },
+      "v2": {
+        "weth": null,
+        "usdg": null
+      }
+    }
+  ]
+}

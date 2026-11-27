@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "routerVersion": 1,
+  "network": "Robinhood Chain Testnet",
+  "chainId": 46630,
+  "rpcUrl": "https://rpc.testnet.chain.robinhood.com",
+  "explorerUrl": "https://explorer.testnet.chain.robinhood.com",
+  "poolManager": "0x8366a39cc670b4001a1121b8f6a443a643e40951",
+  "poolDiscoveryStartBlock": 121317900,
+  "v4Quoter": "0x8dc178efb8111bb0973dd9d722ebeff267c98f94",
+  "permit2": "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+  "permRouter": "0x3e350b79D4983a0e86Ad4eE25dB1DBBbfB55114d",
+  "v4Adapter": "0xC4Df49493a828F681160056cb6D46143B56593D0",
+  "v3Adapter": null,
+  "quoteSigner": null,
+  "owner": "0x141DB8c1C42B0fa5b13eE17136e4E037597886a8",
+  "treasury": "0x141DB8c1C42B0fa5b13eE17136e4E037597886a8",
+  "timelock": null,
+  "timelockDelaySeconds": null,
+  "venues": {
+    "synthraV3": {
+      "factory": "0x911b4000D3422F482F4062a913885f7b035382Df",
+      "swapRouter02": "0x3Ce954107b1A675826B33bF23060Dd655e3758fE",
+      "quoterV2": "0x231606c321A99DE81e28fE48B07a93F1ba49e713",
+      "quoterShim": "0xb3C009aECAeDd5ccC62Ec12eDAAA55F19C4A1eFb",
+      "weth": "0x33e4191705c386532ba27cBF171Db86919200B94"
+    }
+  },
+  "aggregatorHooks": [],
+  "policy": {
+    "version": 1,
+    "platformFeeBps": 20,
+    "rebateShareBps": 2500
+  },
+  "deploymentBlock": 154833178,
+  "ownershipStatus": "accepted",
+  "sourceVerification": "pending",
+  "deploymentTransactions": [
+    "0x1654e9dc382f6e1e743302d0e2ca19dcddc129ddfb65a2a39a9d051794e94daf",
+    "0xd8a418addfb4f9aef8d8271a02d75deb8590d49f810fa81f92a033f649867c80",
+    "0x0ded432bd75ce8637b99b6349c7c641db65e3e3c0f1e05a458fe4782305cceeb"
+  ],
+  "generatedAt": "2026-11-18T05:24:12.278Z",
+  "source": "browser-wallet"
+}

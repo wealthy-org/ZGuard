@@ -1,0 +1,44 @@
+name: Pool discovery
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 4 * * *"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  refresh-registry:
+    if: github.event_name == 'workflow_dispatch' || vars.PERM_POOL_DISCOVERY_ENABLED == '1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.21.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.20.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Scan new PoolManager Initialize events
+        env:
+          RH_TESTNET_RPC_URL: ${{ secrets.RH_TESTNET_RPC_URL }}
+        run: |
+          test -n "$RH_TESTNET_RPC_URL" || { echo "RH_TESTNET_RPC_URL is required"; exit 1; }
+          pnpm pools:discover
+      - uses: peter-evans/create-pull-request@v7
+        with:
+          branch: automation/robinhood-pool-registry
+          delete-branch: true
+          commit-message: "chore: refresh Robinhood v4 pool registry"
+          title: "chore: refresh Robinhood v4 pool registry"
+          body: |
+            Automated incremental scan of canonical PoolManager `Initialize` events.
+            Hooked pools remain excluded unless their hook is explicitly reviewed in the official manifest.
+          add-paths: deployments/v4-pools.json
+          labels: operations,pool-discovery

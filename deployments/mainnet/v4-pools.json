@@ -1,0 +1,187 @@
+{
+  "chainId": 4663,
+  "poolManager": "0x8366a39CC670B4001A1121B8F6A443A643e40951",
+  "generatedAt": "2026-11-23T05:52:51.316Z",
+  "fromBlock": 0,
+  "toBlock": 121089419,
+  "sourceReport": "deployments/mainnet/liquidity-report.json",
+  "admission": {
+    "maxRoundTripLossBps": 100,
+    "maxBuyImpactBps": 300,
+    "hookless": true,
+    "nativeEthOnly": true,
+    "doNotRecord": []
+  },
+  "pools": [
+    {
+      "id": "0xe4d9d8c880cedae4ed7884609969c262cd1138a328e05eca7b32f834e649609d",
+      "currency0": "0x0000000000000000000000000000000000000000",
+      "currency1": "0x2e0847E8910a9732eB3fb1bb4b70a580ADAD4FE3",
+      "fee": 2100,
+      "tickSpacing": 21,
+      "hooks": "0x0000000000000000000000000000000000000000",
+      "hookData": "0x",
+      "sourceType": "direct",
+      "initializationBlock": 69741890,
+      "symbol": "GOOGL",
+      "roundTripLossBps": 79
+    },
+    {
+      "id": "0xf89d70906c1464e5f0853fbb0601c111bfb48ef54537c0527694a559b33dd801",
+      "currency0": "0x0000000000000000000000000000000000000000",
+      "currency1": "0xc0D6457C16Cc70d6790Dd43521C899C87ce02f35",
+      "fee": 2100,
+      "tickSpacing": 21,
+      "hooks": "0x0000000000000000000000000000000000000000",
+      "hookData": "0x",
+      "sourceType": "direct",
+      "initializationBlock": 69735695,
+      "symbol": "META",
+      "roundTripLossBps": 79
+    },
+    {
+      "id": "0x71f9660f9535e3e81d720696a58ea80274da8b2c6eb7c3acb22611d977439a5c",
+      "currency0": "0x0000000000000000000000000000000000000000",
+      "currency1": "0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC",
+      "fee": 500,
+      "tickSpacing": 10,
+      "hooks": "0x0000000000000000000000000000000000000000",
+      "hookData": "0x",
+      "sourceType": "direct",
+      "initializationBlock": 16020996,
+      "symbol": "NVDA",
+      "roundTripLossBps": 42
+    },
+    {
+      "id": "0xedaf5b20d883a50a01411912f1977077d3d94b01f6e5996f6cd14aaecc1a2a35",
+      "currency0": "0x0000000000000000000000000000000000000000",
+      "currency1": "0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC",
+      "fee": 2500,
+      "tickSpacing": 25,
+      "hooks": "0x0000000000000000000000000000000000000000",
+      "hookData": "0x",
+      "sourceType": "direct",
+      "initializationBlock": 68962564,
+      "symbol": "NVDA",
+      "roundTripLossBps": 87
+    },
+    {
+      "id": "0x541942afd092e6c18ccd56bb3d9205f80a2adce77edf260c464c5f9919f37168",
+      "currency0": "0x0000000000000000000000000000000000000000",
+      "currency1": "0x4a0E65A3EcceC6dBe60AE065F2e7bb85Fae35eEa",
+      "fee": 3000,
+      "tickSpacing": 30,
+      "hooks": "0x0000000000000000000000000000000000000000",
+      "hookData": "0x",
+      "sourceType": "direct",
+      "initializationBlock": 31153787,
+      "symbol": "SPCX",
+      "roundTripLossBps": 100
+    },
+    {
+      "id": "0x509c6c6826ef06e0e29f24f18d9389533c52358a3b385d99a67a2afbb07f23c6",
+      "currency0": "0x0000000000000000000000000000000000000000",
+      "currency1": "0x117cc2133c37B721F49dE2A7a74833232B3B4C0C",
+      "fee": 1000,
+      "tickSpacing": 10,
+      "hooks": "0x0000000000000000000000000000000000000000",
+      "hookData": "0x",
+      "sourceType": "direct",
+      "initializationBlock": 50099669,
+      "symbol": "SPY",
+      "roundTripLossBps": 53
+    },
+    {
+      "id": "0xed80cb489e051246f95fbe9e507d04120faac8742e4c20eae69d6738d7b36d6f",
+      "currency0": "0x0000000000000000000000000000000000000000",
+      "currency1": "0x322F0929c4625eD5bAd873c95208D54E1c003b2d",
+      "fee": 1800,
+      "tickSpacing": 18,
+      "hooks": "0x0000000000000000000000000000000000000000",
+      "hookData": "0x",
+      "sourceType": "direct",
+      "initializationBlock": 69194579,
+      "symbol": "TSLA",
+      "roundTripLossBps": 78
+    }
+  ],
+  "v3ReferencePools": [
+    {
+      "symbol": "NVDA",
+      "token": "0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC",
+      "pool": "0x62AB521f71431f78ac374CdbadC6cda3c8916b6C",
+      "fee": 500,
+      "roundTripLossBps": 39
+    },
+    {
+      "symbol": "NVDA",
+      "token": "0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC",
+      "pool": "0xC0Be1cb0f674D9737C72B2A63fC542361185b807",
+      "fee": 3000,
+      "roundTripLossBps": 89
+    },
+    {
+      "symbol": "AAPL",
+      "token": "0xaF3D76f1834A1d425780943C99Ea8A608f8a93f9",
+      "pool": "0x8bb3514e2204E1cDF3Ac149EFEe7Ff04D91B719f",
+      "fee": 500,
+      "roundTripLossBps": 39
+    },
+    {
+      "symbol": "TSLA",
+      "token": "0x322F0929c4625eD5bAd873c95208D54E1c003b2d",
+      "pool": "0xA953CA88ff430e9487c60cA34d757414f4efdA07",
+      "fee": 3000,
+      "roundTripLossBps": 89
+    },
+    {
+      "symbol": "SPCX",
+      "token": "0x4a0E65A3EcceC6dBe60AE065F2e7bb85Fae35eEa",
+      "pool": "0xC3c9F0171490Ef0F4536fe493F3b0EbB5ee0CB5e",
+      "fee": 500,
+      "roundTripLossBps": 39
+    },
+    {
+      "symbol": "PLTR",
+      "token": "0x894E1EC2D74FFE5AEF8Dc8A9e84686acCB964F2A",
+      "pool": "0x61be5Bfbaf17aE28Bf68006103B2e78Fe6112638",
+      "fee": 3000,
+      "roundTripLossBps": 90
+    },
+    {
+      "symbol": "AMD",
+      "token": "0x86923f96303D656E4aa86D9d42D1e57ad2023fdC",
+      "pool": "0x5ca1B5e6Cb510b3bf53E7cd8f7d9B5a71b4a4dc0",
+      "fee": 3000,
+      "roundTripLossBps": 90
+    },
+    {
+      "symbol": "META",
+      "token": "0xc0D6457C16Cc70d6790Dd43521C899C87ce02f35",
+      "pool": "0xa4BdB396a69617eb7F70E2cc1EF526f7340b1B0d",
+      "fee": 3000,
+      "roundTripLossBps": 89
+    },
+    {
+      "symbol": "SPY",
+      "token": "0x117cc2133c37B721F49dE2A7a74833232B3B4C0C",
+      "pool": "0xDDCBBa3666f578E3F09516f21Ff85BFee859AB5e",
+      "fee": 500,
+      "roundTripLossBps": 39
+    },
+    {
+      "symbol": "QQQ",
+      "token": "0xD5f3879160bc7c32ebb4dC785F8a4F505888de68",
+      "pool": "0xA40D00a55d43bA2d188039DCF88bD68f4F133E78",
+      "fee": 3000,
+      "roundTripLossBps": 92
+    },
+    {
+      "symbol": "COIN",
+      "token": "0x6330D8C3178a418788dF01a47479c0ce7CCF450b",
+      "pool": "0x6707aeAc7D0e519B083219d27BB427364363183A",
+      "fee": 3000,
+      "roundTripLossBps": 89
+    }
+  ]
+}

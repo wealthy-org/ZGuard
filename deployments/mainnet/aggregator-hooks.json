@@ -1,0 +1,201 @@
+{
+  "chainId": 4663,
+  "generatedAt": "2026-11-23T05:34:26.711Z",
+  "block": 121177195,
+  "amountInWei": "1000000000000000",
+  "admission": {
+    "maxRoundTripLossBps": 100,
+    "versions": [
+      "SlipstreamAggregator v1.0"
+    ],
+    "permissionBits": "0x2888",
+    "currency": "WETH-denominated pools (reached through PermWethAdapter)"
+  },
+  "note": "Hooks are third-party immutable contracts whose source is verified on Blockscout. Perm pins each runtime codehash; a change disables the route.",
+  "hooks": [
+    {
+      "address": "0xA117C4f25474b1283345E4DF8D88b9aeC4F62888",
+      "version": "SlipstreamAggregator v1.0",
+      "runtimeCodehash": "0xce96b04fe4d2da5efb36c9f54fe132debb8a3e00bcf9165a9c5326c2815f6135",
+      "permissionBits": "0x2888",
+      "pools": [
+        "0xd876f105cec9418974c2aad800124c901d7a791780387ac6615ded36b29a7251",
+        "0x0e1a65fa74f542153080fc3a3b5825fb3ac037c075f721962ca8f5e8bab3fa2d",
+        "0x007768bf8a7686118066323a69e35e3facc76c6b61cb530f95581a5f6aa47b97"
+      ]
+    },
+    {
+      "address": "0xA13FCD837a155DE23d916A4a60B5949e85Fa2888",
+      "version": "SlipstreamAggregator v1.0",
+      "runtimeCodehash": "0x5f894fb95d9a83881aa43777ca256fffa38e7fbeb580783d8fa9a35b556f9ece",
+      "permissionBits": "0x2888",
+      "pools": [
+        "0x85733ed59ee5b889fd8b513710f2f35c8914a804333e14666b73e2df90cdb1af",
+        "0xafe1fd12d27d4085c30ccfab61084ad3bd830619e6c2c1f613367f1555212db1",
+        "0x41a54648d20a49b0205aa82223bdedb0c2670cef56b6569e67b52789e446792c",
+        "0x5a750d8e93e93ab5a652753abdf3b5fb3aa46adec2eb35caa1b55f0735f27ca8",
+        "0x9ffe69a1cca1ee25f64d2a4e9e50ca3600470f3456ef0a53a47f176fb27e4e00"
+      ]
+    }
+  ],
+  "pools": [
+    {
+      "id": "0xd876f105cec9418974c2aad800124c901d7a791780387ac6615ded36b29a7251",
+      "currency0": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+      "currency1": "0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC",
+      "fee": 8388608,
+      "tickSpacing": 50,
+      "hooks": "0xA117C4f25474b1283345E4DF8D88b9aeC4F62888",
+      "hookData": "0x",
+      "sourceType": "aggregator-hook",
+      "initializationBlock": 0,
+      "symbol": "NVDA",
+      "tokenAddress": "0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC",
+      "externalPool": "0xF8996E22ac7A67fAe741830Ad83B3b4D5e5de203",
+      "hookVersion": "SlipstreamAggregator v1.0",
+      "hookCodehash": "0xce96b04fe4d2da5efb36c9f54fe132debb8a3e00bcf9165a9c5326c2815f6135",
+      "buyAmountOut": "12820086801980048",
+      "buyGasEstimate": "225605",
+      "roundTripLossBps": 24
+    },
+    {
+      "id": "0x0e1a65fa74f542153080fc3a3b5825fb3ac037c075f721962ca8f5e8bab3fa2d",
+      "currency0": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+      "currency1": "0x117cc2133c37B721F49dE2A7a74833232B3B4C0C",
+      "fee": 8388608,
+      "tickSpacing": 1,
+      "hooks": "0xA117C4f25474b1283345E4DF8D88b9aeC4F62888",
+      "hookData": "0x",
+      "sourceType": "aggregator-hook",
+      "initializationBlock": 0,
+      "symbol": "SPY",
+      "tokenAddress": "0x117cc2133c37B721F49dE2A7a74833232B3B4C0C",
+      "externalPool": "0x3e1afDe90341F843c941fF4077d915bDE3008c7E",
+      "hookVersion": "SlipstreamAggregator v1.0",
+      "hookCodehash": "0xce96b04fe4d2da5efb36c9f54fe132debb8a3e00bcf9165a9c5326c2815f6135",
+      "buyAmountOut": "2442865471131471",
+      "buyGasEstimate": "216583",
+      "roundTripLossBps": 22
+    },
+    {
+      "id": "0x007768bf8a7686118066323a69e35e3facc76c6b61cb530f95581a5f6aa47b97",
+      "currency0": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+      "currency1": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+      "fee": 8388608,
+      "tickSpacing": 1,
+      "hooks": "0xA117C4f25474b1283345E4DF8D88b9aeC4F62888",
+      "hookData": "0x",
+      "sourceType": "aggregator-hook",
+      "initializationBlock": 0,
+      "symbol": "USDG",
+      "tokenAddress": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+      "externalPool": "0xFAE65eAa11943f45E83D5B45DC7A7C801C51bfB0",
+      "hookVersion": "SlipstreamAggregator v1.0",
+      "hookCodehash": "0xce96b04fe4d2da5efb36c9f54fe132debb8a3e00bcf9165a9c5326c2815f6135",
+      "buyAmountOut": "1724572",
+      "buyGasEstimate": "184085",
+      "roundTripLossBps": 23
+    },
+    {
+      "id": "0x85733ed59ee5b889fd8b513710f2f35c8914a804333e14666b73e2df90cdb1af",
+      "currency0": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+      "currency1": "0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC",
+      "fee": 8388608,
+      "tickSpacing": 50,
+      "hooks": "0xA13FCD837a155DE23d916A4a60B5949e85Fa2888",
+      "hookData": "0x",
+      "sourceType": "aggregator-hook",
+      "initializationBlock": 0,
+      "symbol": "NVDA",
+      "tokenAddress": "0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC",
+      "externalPool": "0xee141c6878256984D5b8f88c4B70aA3D29226D50",
+      "hookVersion": "SlipstreamAggregator v1.0",
+      "hookCodehash": "0x5f894fb95d9a83881aa43777ca256fffa38e7fbeb580783d8fa9a35b556f9ece",
+      "buyAmountOut": "12794746030666805",
+      "buyGasEstimate": "411875",
+      "roundTripLossBps": 25
+    },
+    {
+      "id": "0xafe1fd12d27d4085c30ccfab61084ad3bd830619e6c2c1f613367f1555212db1",
+      "currency0": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+      "currency1": "0xaF3D76f1834A1d425780943C99Ea8A608f8a93f9",
+      "fee": 8388608,
+      "tickSpacing": 50,
+      "hooks": "0xA13FCD837a155DE23d916A4a60B5949e85Fa2888",
+      "hookData": "0x",
+      "sourceType": "aggregator-hook",
+      "initializationBlock": 0,
+      "symbol": "AAPL",
+      "tokenAddress": "0xaF3D76f1834A1d425780943C99Ea8A608f8a93f9",
+      "externalPool": "0x2Ebf42AC7196C3181B3937897902fA0a6715224b",
+      "hookVersion": "SlipstreamAggregator v1.0",
+      "hookCodehash": "0x5f894fb95d9a83881aa43777ca256fffa38e7fbeb580783d8fa9a35b556f9ece",
+      "buyAmountOut": "4961431482841609",
+      "buyGasEstimate": "387836",
+      "roundTripLossBps": 52
+    },
+    {
+      "id": "0x41a54648d20a49b0205aa82223bdedb0c2670cef56b6569e67b52789e446792c",
+      "currency0": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+      "currency1": "0x4a0E65A3EcceC6dBe60AE065F2e7bb85Fae35eEa",
+      "fee": 8388608,
+      "tickSpacing": 50,
+      "hooks": "0xA13FCD837a155DE23d916A4a60B5949e85Fa2888",
+      "hookData": "0x",
+      "sourceType": "aggregator-hook",
+      "initializationBlock": 0,
+      "symbol": "SPCX",
+      "tokenAddress": "0x4a0E65A3EcceC6dBe60AE065F2e7bb85Fae35eEa",
+      "externalPool": "0x8A96C16474DCb1d1d716bc4F91A5B23f40C916CC",
+      "hookVersion": "SlipstreamAggregator v1.0",
+      "hookCodehash": "0x5f894fb95d9a83881aa43777ca256fffa38e7fbeb580783d8fa9a35b556f9ece",
+      "buyAmountOut": "13090974792159749",
+      "buyGasEstimate": "414459",
+      "roundTripLossBps": 28
+    },
+    {
+      "id": "0x5a750d8e93e93ab5a652753abdf3b5fb3aa46adec2eb35caa1b55f0735f27ca8",
+      "currency0": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+      "currency1": "0x117cc2133c37B721F49dE2A7a74833232B3B4C0C",
+      "fee": 8388608,
+      "tickSpacing": 50,
+      "hooks": "0xA13FCD837a155DE23d916A4a60B5949e85Fa2888",
+      "hookData": "0x",
+      "sourceType": "aggregator-hook",
+      "initializationBlock": 0,
+      "symbol": "SPY",
+      "tokenAddress": "0x117cc2133c37B721F49dE2A7a74833232B3B4C0C",
+      "externalPool": "0x05aFb8E895e77Ce70F79056137eA606b05BF5abD",
+      "hookVersion": "SlipstreamAggregator v1.0",
+      "hookCodehash": "0x5f894fb95d9a83881aa43777ca256fffa38e7fbeb580783d8fa9a35b556f9ece",
+      "buyAmountOut": "2440045027727578",
+      "buyGasEstimate": "417685",
+      "roundTripLossBps": 22
+    },
+    {
+      "id": "0x9ffe69a1cca1ee25f64d2a4e9e50ca3600470f3456ef0a53a47f176fb27e4e00",
+      "currency0": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+      "currency1": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+      "fee": 8388608,
+      "tickSpacing": 50,
+      "hooks": "0xA13FCD837a155DE23d916A4a60B5949e85Fa2888",
+      "hookData": "0x",
+      "sourceType": "aggregator-hook",
+      "initializationBlock": 0,
+      "symbol": "USDG",
+      "tokenAddress": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+      "externalPool": "0x7615926023bb149f36095645C2a81DC367d39750",
+      "hookVersion": "SlipstreamAggregator v1.0",
+      "hookCodehash": "0x5f894fb95d9a83881aa43777ca256fffa38e7fbeb580783d8fa9a35b556f9ece",
+      "buyAmountOut": "1724272",
+      "buyGasEstimate": "384774",
+      "roundTripLossBps": 22
+    }
+  ],
+  "rejectedHooks": [
+    {
+      "hook": "0xb8dCD693f03Fae449E4A6c19873Ea4410083A888",
+      "reason": "no aggregatorHookVersion()/poolManager()"
+    }
+  ]
+}

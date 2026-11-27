@@ -1,0 +1,5 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": { "api/sign.mjs": { "maxDuration": 10 } },
+  "headers": [{ "source": "/(.*)", "headers": [{ "key": "x-content-type-options", "value": "nosniff" }, { "key": "cache-control", "value": "no-store" }] }]
+}

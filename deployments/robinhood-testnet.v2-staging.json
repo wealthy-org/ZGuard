@@ -1,0 +1,149 @@
+{
+  "schemaVersion": 2,
+  "environment": "allowlisted-testnet-staging",
+  "releaseStatus": "non-release",
+  "nonRelease": true,
+  "executionReady": false,
+  "network": "Robinhood Chain Testnet",
+  "chainId": 46630,
+  "stagingUrl": "https://perm-iota.vercel.app",
+  "officialReleaseManifest": "deployments/robinhood-testnet.json",
+  "deploymentCommitSha": "424933ab9123717cbb264713c87de3af9c40c06f",
+  "routerVersion": 2,
+  "deploymentBlock": 155432663,
+  "contracts": {
+    "permRouter": {
+      "address": "0xFdC667735C8998fEB83C4c3c7B4eCFB404DAFA87",
+      "runtimeCodehash": "0x17d16f05c4c267b21ee4cae98a5b900eb52dd01a6d164efc1831f6f18654a399",
+      "sourceVerification": "verified-exact-match",
+      "explorerUrl": "https://explorer.testnet.chain.robinhood.com/address/0xFdC667735C8998fEB83C4c3c7B4eCFB404DAFA87?tab=contract"
+    },
+    "v4Adapter": {
+      "address": "0x9F05AA13b333d4FB780c8A343f4663de9C9c798c",
+      "runtimeCodehash": "0xcc241ccd75cd3abcc2f054117d9ad5e0481d46ac040dbea218f9afb40bb1de64",
+      "sourceVerification": "verified-exact-match",
+      "explorerUrl": "https://explorer.testnet.chain.robinhood.com/address/0x9F05AA13b333d4FB780c8A343f4663de9C9c798c?tab=contract"
+    },
+    "v3Adapter": {
+      "address": "0x1D608E676b3bF506d15f4C9Ee0fAAa9aC87ce6Ba",
+      "runtimeCodehash": "0xddc20f21cc0ee77e73437b38525ca1ed2390fa040e2c181de08147821f5d255f",
+      "sourceVerification": "verified-exact-match",
+      "explorerUrl": "https://explorer.testnet.chain.robinhood.com/address/0x1D608E676b3bF506d15f4C9Ee0fAAa9aC87ce6Ba?tab=contract"
+    }
+  },
+  "dependencies": {
+    "poolManager": "0x8366a39cc670b4001a1121b8f6a443a643e40951",
+    "permit2": "0x000000000022D473030F116dDEE9F6B43aC78BA3"
+  },
+  "roles": {
+    "owner": "0x665fF833a1F33FA47730a6ADd86559641a7a9940",
+    "treasury": "0x665fF833a1F33FA47730a6ADd86559641a7a9940",
+    "pauseGuardian": "0x665fF833a1F33FA47730a6ADd86559641a7a9940",
+    "quoteSigner": "0xAAF566463d8D989Ea4539f25f8653dd125371199",
+    "governanceClassification": "single-eoa-testnet-staging",
+    "quoteSignerCustodyClassification": "local-testnet-burner",
+    "timelock": null
+  },
+  "providers": {
+    "uniswapV4Direct": {
+      "providerId": "0x808e11e3f807b72a6540236bf41c49eda2be544f8e72a9937065838d69904b3d",
+      "adapter": "0x9F05AA13b333d4FB780c8A343f4663de9C9c798c",
+      "enabled": true
+    },
+    "synthraV3": {
+      "providerId": "0xa516aec7af6821eefb205ac3bb108e5e0c51491b58fced60a94d353415916905",
+      "adapter": "0x1D608E676b3bF506d15f4C9Ee0fAAa9aC87ce6Ba",
+      "enabled": true
+    },
+    "uniswapV4AggregatorHook": {
+      "reservedProviderId": "0x3f49ac88219a4e0b05a3a8a13f0be9a6d17b1e4ec74409c45743ce6ce672176c",
+      "enabled": false,
+      "reviewedHooks": []
+    }
+  },
+  "feePolicy": {
+    "version": 1,
+    "platformFeeBps": 20,
+    "rebateShareBps": 2500
+  },
+  "canonicalStagingEvidence": {
+    "transactionHash": "0xa74beb5b8d5c22aa8ea11d77f36a79070e9464439b033b83f99dd3c5c27251b5",
+    "routeClassification": "uniswap-v4-direct-no-hook",
+    "status": "passed-staging-only",
+    "explorerUrl": "https://explorer.testnet.chain.robinhood.com/tx/0xa74beb5b8d5c22aa8ea11d77f36a79070e9464439b033b83f99dd3c5c27251b5",
+    "receiptId": "0xe610fa78d016783ea8997b1b9324af3766a3dd571a252610196c5b53a3659e03"
+  },
+  "deploymentTransactions": [
+    "0xa8908e67c765a0903a076646257d18e465ad9ce6de5441ec358e5d1a1318b3e4",
+    "0xe93d8954e09ffc18ca701308d0c2782e771c6f176ef987e2db7fad497965f426",
+    "0x2d25910eee2fedef8246fb5a750bda025246626d5e0f671d8c0ead800648edf2",
+    "0xafcaa81fd8af16ad473ff3482a0d70a564eb418c2b64e128591ca8c01a1b620f",
+    "0xe1ac7370a7f58ff63bdc8ea3249d50a6edbb716a1ea5bc7abc6d49253b0f8012"
+  ],
+  "boundaries": {
+    "walletAllowlistRequired": true,
+    "aggregatorHooksEnabled": false,
+    "reviewedThirdPartyV2Enabled": false,
+    "remoteSignerCustodyReady": false,
+    "hostedOperationsReady": false,
+    "releaseEvidenceComplete": false
+  },
+  "stagingEvidenceSuite": {
+    "status": "eight-of-nine-staging-scenarios-recorded",
+    "nonRelease": true,
+    "account": "0x9b85B177702EDE638cc955b1142635c965E5dd3C",
+    "referrer": "0x693C4BC73803a02AEf01654af87026ee0e73D88d",
+    "scenarios": {
+      "v3": {
+        "transactionHash": "0xdf2002f1aa676e56035206ed95113af4cfe141a3b2b6b6f3ee2bac2414b223fd",
+        "routeClassification": "synthra-v3",
+        "status": "passed-staging-only",
+        "explorerUrl": "https://explorer.testnet.chain.robinhood.com/tx/0xdf2002f1aa676e56035206ed95113af4cfe141a3b2b6b6f3ee2bac2414b223fd",
+        "receiptId": "0xccda0a0c0c1630eccb848a7b8fdb055ddf529a9d2cb2c14cbd4c3ac897c29a75"
+      },
+      "multiHop": {
+        "transactionHash": "0x60849ff5a8253034866f529f9d42ec3a49f1bb496c1664be083a2f614e033032",
+        "routeClassification": "token-to-token-two-step",
+        "status": "passed-staging-only",
+        "explorerUrl": "https://explorer.testnet.chain.robinhood.com/tx/0x60849ff5a8253034866f529f9d42ec3a49f1bb496c1664be083a2f614e033032",
+        "receiptId": "0x14b23ddfe13a17dc6466e1b20d971d23bdc2f9686e0fc1c9635737acfd5668a0"
+      },
+      "crossVenue": {
+        "transactionHash": "0x994b1b8ac83d8e3ae03d036c9d85cadc71e8b93e3144b8c6167d471716f77290",
+        "routeClassification": "uniswap-v4-to-synthra-v3-two-step",
+        "status": "passed-staging-only",
+        "explorerUrl": "https://explorer.testnet.chain.robinhood.com/tx/0x994b1b8ac83d8e3ae03d036c9d85cadc71e8b93e3144b8c6167d471716f77290",
+        "receiptId": "0x7502cc89157e25c8f8e7deb44d7e2bb67be0983823eabf3913b9db9d7c24a1b0"
+      },
+      "permit2": {
+        "transactionHash": "0xa325c640cac9908081d569e8226f373c29724f2c8c4a97dc5c95a8a132a910e1",
+        "routeClassification": "permit2-signature-transfer",
+        "status": "passed-staging-only",
+        "explorerUrl": "https://explorer.testnet.chain.robinhood.com/tx/0xa325c640cac9908081d569e8226f373c29724f2c8c4a97dc5c95a8a132a910e1",
+        "receiptId": "0xf7cf75004ba52cc4ce59472b4549d34dde85bc6c718fb367be3fae71775a2a66"
+      },
+      "referral": {
+        "transactionHash": "0x7243055dea1a8e69b1b45e36ea6b636381d5f36532e0baafcbed43b3272e4cc8",
+        "routeClassification": "referral-fee-accrual",
+        "status": "passed-staging-only",
+        "explorerUrl": "https://explorer.testnet.chain.robinhood.com/tx/0x7243055dea1a8e69b1b45e36ea6b636381d5f36532e0baafcbed43b3272e4cc8",
+        "receiptId": "0xfee94f5dfc0e358872a7b3f5d22e32cd28f5579bec831b4303318b90a2e097ea"
+      },
+      "treasuryClaim": {
+        "transactionHash": "0x9582690dcf859b52cf957bd95ee3541de5ed72411a16941e5ca3828c10058974",
+        "routeClassification": "native-treasury-fee-claim",
+        "status": "passed-staging-only",
+        "explorerUrl": "https://explorer.testnet.chain.robinhood.com/tx/0x9582690dcf859b52cf957bd95ee3541de5ed72411a16941e5ca3828c10058974"
+      },
+      "referralClaim": {
+        "transactionHash": "0x9a785b45cea501a9a267ea19aecce3c246add410f81131dfa1d95070d7c31994",
+        "routeClassification": "native-referral-fee-claim",
+        "status": "passed-staging-only",
+        "explorerUrl": "https://explorer.testnet.chain.robinhood.com/tx/0x9a785b45cea501a9a267ea19aecce3c246add410f81131dfa1d95070d7c31994"
+      }
+    },
+    "walletConnect": {
+      "status": "pending-manual-mobile-pairing-and-independent-attestation"
+    }
+  }
+}

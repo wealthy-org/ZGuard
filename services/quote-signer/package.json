@@ -1,0 +1,15 @@
+{
+  "name": "perm-quote-signer",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Isolated, policy-checked EIP-712 quote signer for PermRouter (remote mode).",
+  "engines": { "node": ">=20.9.0" },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node test-signer.mjs"
+  },
+  "dependencies": {
+    "viem": "2.58.0"
+  }
+}

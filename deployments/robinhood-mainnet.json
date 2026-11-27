@@ -1,0 +1,147 @@
+{
+  "schemaVersion": 2,
+  "routerVersion": 2,
+  "environment": "allowlisted-mainnet",
+  "network": "Robinhood Chain",
+  "chainId": 4663,
+  "rpcUrl": "https://rpc.mainnet.chain.robinhood.com",
+  "explorerUrl": "https://robinhoodchain.blockscout.com",
+  "deploymentCommitSha": "84295e7ec579c7652f3793c3b505c1ffaf1a0d5e",
+  "repositoryDirtyAtDeployment": false,
+  "deploymentBlock": 121246040,
+  "poolDiscoveryStartBlock": 0,
+  "poolManager": "0x8366a39CC670B4001A1121B8F6A443A643e40951",
+  "v4Quoter": "0x8Dc178eFB8111BB0973Dd9d722ebeFF267c98F94",
+  "v4StateView": "0xF3334192D15450CdD385c8B70e03f9A6bD9E673b",
+  "permit2": "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+  "weth": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+  "permRouter": "0x155bc06240dE046112e86C63a35f8b954AF32Ea2",
+  "v4Adapter": "0xee94ED044B7F1ec935A62109e172BCEf42A62E1A",
+  "v3Adapter": "0x8925caAD31C3a1ef66E41B7988a1d2b43Bb382E9",
+  "v2Adapter": null,
+  "wethAdapter": null,
+  "contracts": {
+    "permRouter": {
+      "address": "0x155bc06240dE046112e86C63a35f8b954AF32Ea2",
+      "runtimeCodehash": "0x01f1a8f4781311e7331fa9d70b7f03f390da30411b5ade105635f8d2f4ba5cdf",
+      "explorerUrl": "https://robinhoodchain.blockscout.com/address/0x155bc06240dE046112e86C63a35f8b954AF32Ea2?tab=contract",
+      "sourceVerification": "verified"
+    },
+    "v4Adapter": {
+      "address": "0xee94ED044B7F1ec935A62109e172BCEf42A62E1A",
+      "runtimeCodehash": "0x9be1b5722f9a472267c5751971c8463f95f429b52ec47bc4975581aad78ebd1a",
+      "explorerUrl": "https://robinhoodchain.blockscout.com/address/0xee94ED044B7F1ec935A62109e172BCEf42A62E1A?tab=contract",
+      "sourceVerification": "verified"
+    },
+    "v3Adapter": {
+      "address": "0x8925caAD31C3a1ef66E41B7988a1d2b43Bb382E9",
+      "runtimeCodehash": "0x5901832cbc981e4583e3006966a84d8fb0af4ef38ab3e5c15336471a41c0615f",
+      "explorerUrl": "https://robinhoodchain.blockscout.com/address/0x8925caAD31C3a1ef66E41B7988a1d2b43Bb382E9?tab=contract",
+      "sourceVerification": "verified"
+    }
+  },
+  "dependencies": {
+    "poolManager": "0x8366a39CC670B4001A1121B8F6A443A643e40951",
+    "v4Quoter": "0x8Dc178eFB8111BB0973Dd9d722ebeFF267c98F94",
+    "v4StateView": "0xF3334192D15450CdD385c8B70e03f9A6bD9E673b",
+    "permit2": "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+    "weth": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+    "v3Factory": "0x1f7d7550B1b028f7571E69A784071F0205FD2EfA",
+    "v3SwapRouter02": "0xCaf681a66D020601342297493863E78C959E5cb2",
+    "v3QuoterV2": "0x33e885eD0Ec9bF04EcfB19341582aADCb4c8A9E7"
+  },
+  "dependencyCodehashes": {
+    "poolManager": "0xbd3881180b547f5fe817545743cfb4343e96b1bc6640dcd70c106b0066e95626",
+    "v4Quoter": "0xd707b1da8cb165e5ea35a3b4450d971eb562ec171e23492aa117036b78a868f6",
+    "v4StateView": "0x7d9c591e0956fd89d98feb4ffcfe8bf1f7a62bd485edd979fa21d104b49878a6",
+    "permit2": "0x5208783f52488f7d3493e5e38311ab707c1d75457fe472a19b0b4d57d66a7fca",
+    "weth": "0x5706be52f64875fee65a2cec0d80e47a23d8793cbe85d214b48445e2d05f5353",
+    "v3Factory": "0xec72b1abd1f2faee020cfea9c646bd8994f9fb389054f6e574f103a895091739",
+    "v3SwapRouter02": "0x6f36c378e272c6324c48f045182bcb54bd8ad654cf9ebd42e8893d52c4cb25dc",
+    "v3QuoterV2": "0x3db0868d945e9304c9bc6a8b2181948109ea617647142f3c4083e14393496a28"
+  },
+  "venues": {
+    "uniswapV3": {
+      "factory": "0x1f7d7550B1b028f7571E69A784071F0205FD2EfA",
+      "swapRouter02": "0xCaf681a66D020601342297493863E78C959E5cb2",
+      "quoterV2": "0x33e885eD0Ec9bF04EcfB19341582aADCb4c8A9E7",
+      "weth": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+      "label": "Uniswap v3"
+    },
+    "uniswapV2": null,
+    "synthraV3": null
+  },
+  "providers": {
+    "uniswapV4Direct": "0x808e11e3f807b72a6540236bf41c49eda2be544f8e72a9937065838d69904b3d",
+    "uniswapV3": "0x3e1ba2b70880de8835e37b2821b3ca56e07c15ae583bf7dfa6888e3bd39bb5ca"
+  },
+  "hookProviderStatus": "disabled",
+  "verifiedHooks": [],
+  "aggregatorHooks": [],
+  "roles": {
+    "owner": "0x1FBaDaFb2056Af662aa11732e86B28aF550af0d9",
+    "treasury": "0x3d2faC269954487a63f51bF059701fbD9647e3Bf",
+    "pauseGuardian": "0x1FBaDaFb2056Af662aa11732e86B28aF550af0d9",
+    "quoteSigner": "0x183ef39A2eeEb812661a55a22b67b3917929f369",
+    "timelock": null
+  },
+  "owner": "0x1FBaDaFb2056Af662aa11732e86B28aF550af0d9",
+  "treasury": "0x3d2faC269954487a63f51bF059701fbD9647e3Bf",
+  "pauseGuardian": "0x1FBaDaFb2056Af662aa11732e86B28aF550af0d9",
+  "quoteSigner": "0x183ef39A2eeEb812661a55a22b67b3917929f369",
+  "timelock": null,
+  "referrals": [
+    {
+      "referrer": "0x8b43ac0F705D18d2C42D12Eb2FABe3e45e1045b1",
+      "shareBpsOfNetFee": 5000
+    }
+  ],
+  "policy": {
+    "version": 1,
+    "platformFeeBps": 20,
+    "rebateShareBps": 2500
+  },
+  "feePolicy": {
+    "version": 1,
+    "platformFeeBps": 20,
+    "rebateShareBps": 2500,
+    "publishedInTx": "0xea5fea8c1f4134d9fd5597b855c4890b1ed012f9d93bc7732bebf9549318f46c"
+  },
+  "sourceVerification": "verified",
+  "releaseStatus": "allowlisted-mainnet",
+  "nonRelease": true,
+  "executionReady": false,
+  "deploymentTransactions": [
+    {
+      "label": "deploy PermRouter (publishes fee policy v1 20 bps / 25% rebate)",
+      "hash": "0xea5fea8c1f4134d9fd5597b855c4890b1ed012f9d93bc7732bebf9549318f46c",
+      "gasUsed": "3081484"
+    },
+    {
+      "label": "deploy PermV4Adapter",
+      "hash": "0xedddc3dedbc00948c9d67b11ecc3f64433c9f0f55f1f29ac5a3898eea5b5269e",
+      "gasUsed": "1187015"
+    },
+    {
+      "label": "deploy PermV3Adapter (Uniswap V3 SwapRouter02)",
+      "hash": "0x08b201869388824206ab743c6ce8cd7bb58d1f23ee049b1637d5390f64b7fd41",
+      "gasUsed": "1031140"
+    },
+    {
+      "label": "configureAdapter(v4, UNISWAP_V4_DIRECT)",
+      "hash": "0x833820277ed4b0cc38330024de108619040f965479e9452fc728c7545e1af540",
+      "gasUsed": "96776"
+    },
+    {
+      "label": "configureAdapter(v3, UNISWAP_V3)",
+      "hash": "0x058768436f43d369bc4b539652683d989fff1a82e69f58499b72c1a20926f72c",
+      "gasUsed": "96776"
+    },
+    {
+      "label": "configureReferral(5000 bps)",
+      "hash": "0xb479ede219840b122c8d7af0606e4719b55695045c1997f731f68cfff3f0f66e",
+      "gasUsed": "47900"
+    }
+  ],
+  "generatedAt": "2026-11-23T07:38:58.967Z"
+}

@@ -1,0 +1,201 @@
+{
+  "schemaVersion": 1,
+  "purpose": "perm-chain-46630-v2-venue-admission-review",
+  "chainId": 46630,
+  "reviewedAt": "2026-11-20T17:23:03.699Z",
+  "latestBlock": "155954786",
+  "latestBlockTimestamp": "2026-11-20T17:22:58.000Z",
+  "factory": {
+    "address": "0x6C4cA684D84761E193cB23d62b22fA83bB35E54E",
+    "runtimeCodehash": "0xbab145d02e7005f0d84c6c1639d39b799b0ea16df99ebbdaf5a14d9da820b4e0",
+    "expectedRuntimeCodehash": "0xbab145d02e7005f0d84c6c1639d39b799b0ea16df99ebbdaf5a14d9da820b4e0",
+    "creator": "0xDBc971fD9D533F1AcDf69597a0B2eadC3Edd9dd7",
+    "creationTransactionHash": "0xf3c8ba4fab9e42137ab583f3f9d0846015ac0ec32e8591eb32521a82d7013e0f",
+    "feeTo": "0x0000000000000000000000000000000000000000",
+    "feeToSetter": "0xDBc971fD9D533F1AcDf69597a0B2eadC3Edd9dd7",
+    "allPairsLength": "175",
+    "sourceVerification": {
+      "isVerified": true,
+      "isFullyVerified": true,
+      "isChangedBytecode": false,
+      "compilerVersion": "v0.5.16+commit.9c3226ce",
+      "optimizerEnabled": true,
+      "optimizerRuns": 999999,
+      "evmVersion": "istanbul",
+      "publishedFiles": 11,
+      "exactUniswapV2CoreFiles": 11,
+      "allPublishedSourcesExactUpstreamMatch": true,
+      "files": [
+        {
+          "file": "contracts/UniswapV2Factory.sol",
+          "exactUpstreamMatch": true,
+          "publishedSha256": "e0cef3e874a68cbcc5986451b1fec180ba5ff5699f27a256b7c10fafefe36b99",
+          "upstreamSha256": "e0cef3e874a68cbcc5986451b1fec180ba5ff5699f27a256b7c10fafefe36b99"
+        },
+        {
+          "file": "contracts/interfaces/IUniswapV2Pair.sol",
+          "exactUpstreamMatch": true,
+          "publishedSha256": "29c75e69ce173ff8b498584700fef76bc81498c1d98120e2877a1439f0c31b5a",
+          "upstreamSha256": "29c75e69ce173ff8b498584700fef76bc81498c1d98120e2877a1439f0c31b5a"
+        },
+        {
+          "file": "contracts/libraries/Math.sol",
+          "exactUpstreamMatch": true,
+          "publishedSha256": "e4a9d451964a0689be2b244322a353de143ca4248d8736d91aca4ffadca4325f",
+          "upstreamSha256": "e4a9d451964a0689be2b244322a353de143ca4248d8736d91aca4ffadca4325f"
+        },
+        {
+          "file": "contracts/libraries/SafeMath.sol",
+          "exactUpstreamMatch": true,
+          "publishedSha256": "4b1c95ff75de7342e0fadff58064820a4eb7c2fcb422a75b4994980ce8e216ae",
+          "upstreamSha256": "4b1c95ff75de7342e0fadff58064820a4eb7c2fcb422a75b4994980ce8e216ae"
+        },
+        {
+          "file": "contracts/libraries/UQ112x112.sol",
+          "exactUpstreamMatch": true,
+          "publishedSha256": "6633b57b0723b1d72e08cc3e8b29f0af838294e59863b6cdcce95a141ed02cdb",
+          "upstreamSha256": "6633b57b0723b1d72e08cc3e8b29f0af838294e59863b6cdcce95a141ed02cdb"
+        },
+        {
+          "file": "contracts/interfaces/IUniswapV2Factory.sol",
+          "exactUpstreamMatch": true,
+          "publishedSha256": "51d056199e3f5e41cb1a9f11ce581aa3e190cc982db5771ffeef8d8d1f962a0d",
+          "upstreamSha256": "51d056199e3f5e41cb1a9f11ce581aa3e190cc982db5771ffeef8d8d1f962a0d"
+        },
+        {
+          "file": "contracts/UniswapV2ERC20.sol",
+          "exactUpstreamMatch": true,
+          "publishedSha256": "b8ce88929ce2c93b8fce385f8d57701b1a64c600a95317ea5f3561d36297be32",
+          "upstreamSha256": "b8ce88929ce2c93b8fce385f8d57701b1a64c600a95317ea5f3561d36297be32"
+        },
+        {
+          "file": "contracts/UniswapV2Pair.sol",
+          "exactUpstreamMatch": true,
+          "publishedSha256": "43a5421b31415868367b62bfa161ca10bcee03778873faad905f5a3e2cce9cbd",
+          "upstreamSha256": "43a5421b31415868367b62bfa161ca10bcee03778873faad905f5a3e2cce9cbd"
+        },
+        {
+          "file": "contracts/interfaces/IERC20.sol",
+          "exactUpstreamMatch": true,
+          "publishedSha256": "2b63f199f838028184efefbcfd6cf2b9192624c3dae5dc1116ecbb15c36a67e8",
+          "upstreamSha256": "2b63f199f838028184efefbcfd6cf2b9192624c3dae5dc1116ecbb15c36a67e8"
+        },
+        {
+          "file": "contracts/interfaces/IUniswapV2Callee.sol",
+          "exactUpstreamMatch": true,
+          "publishedSha256": "ecfa434d468bb1888124d8c34b0b8483f4ea1e5cd63f0874c8b28aa4305c1dbc",
+          "upstreamSha256": "ecfa434d468bb1888124d8c34b0b8483f4ea1e5cd63f0874c8b28aa4305c1dbc"
+        },
+        {
+          "file": "contracts/interfaces/IUniswapV2ERC20.sol",
+          "exactUpstreamMatch": true,
+          "publishedSha256": "7948069aea398dec4b7e771ffc749a24fdce3a64673a1b14deae960e7a54c603",
+          "upstreamSha256": "7948069aea398dec4b7e771ffc749a24fdce3a64673a1b14deae960e7a54c603"
+        }
+      ]
+    },
+    "publicProtocolAttribution": null,
+    "officialUniswapDeployment": false
+  },
+  "weth": "0x33e4191705c386532ba27cBF171Db86919200B94",
+  "expectedPairRuntimeCodehash": "0x5b83bdbcc56b2e630f2807bbadd2b0c21619108066b92a58de081261089e9ce5",
+  "supportedPairCount": 2,
+  "supportedPairs": [
+    {
+      "factoryIndex": 60,
+      "address": "0x3Ca1d41f238949F3c033d5C35c5F01A43036a288",
+      "pairRuntimeCodehash": "0x5b83bdbcc56b2e630f2807bbadd2b0c21619108066b92a58de081261089e9ce5",
+      "canonicalPairRuntimeMatch": true,
+      "token0": {
+        "address": "0x33e4191705c386532ba27cBF171Db86919200B94",
+        "symbol": "WETH",
+        "reserve": "1603765963958263"
+      },
+      "token1": {
+        "address": "0xC9f9c86933092BbbfFF3CCb4b105A4A94bf3Bd4E",
+        "symbol": "TSLA",
+        "reserve": "10000000000000000000"
+      },
+      "balancesEqualReserves": true,
+      "totalSupply": "126491106406735172",
+      "kLast": "0",
+      "creationBlock": 91180810,
+      "creationTimestamp": "2026-07-18T03:06:06.000000Z",
+      "swapCountAllTime": 3,
+      "swapCountLast30Days": 0,
+      "lastSwapBlock": 91261360,
+      "lastSwapTimestamp": "2026-07-18T12:30:14.000Z",
+      "daysSinceLastSwap": 125.2,
+      "volume0BaseUnits": "2396234036041737",
+      "volume1BaseUnits": "6000000000000000000",
+      "volume0Formatted18Decimals": "0.002396234036041737",
+      "volume1Formatted18Decimals": "6",
+      "lastSwapTransactionHash": "0xe464da3357a01dfc2370cd6ce02d5e043ff66c30bdcba2de390aa0e473d5c250"
+    },
+    {
+      "factoryIndex": 73,
+      "address": "0x37bF748d0808f8AA61e469d98539D91B2C98187d",
+      "pairRuntimeCodehash": "0x5b83bdbcc56b2e630f2807bbadd2b0c21619108066b92a58de081261089e9ce5",
+      "canonicalPairRuntimeMatch": true,
+      "token0": {
+        "address": "0x33e4191705c386532ba27cBF171Db86919200B94",
+        "symbol": "WETH",
+        "reserve": "15000000000000000"
+      },
+      "token1": {
+        "address": "0x5884aD2f920c162CFBbACc88C9C51AA75eC09E02",
+        "symbol": "AMZN",
+        "reserve": "1334891470067667970"
+      },
+      "balancesEqualReserves": true,
+      "totalSupply": "141421356237309504",
+      "kLast": "0",
+      "creationBlock": 91556898,
+      "creationTimestamp": "2026-07-19T20:24:49.000000Z",
+      "swapCountAllTime": 5,
+      "swapCountLast30Days": 0,
+      "lastSwapBlock": 95953358,
+      "lastSwapTimestamp": "2026-08-01T14:31:04.000Z",
+      "daysSinceLastSwap": 111.12,
+      "volume0BaseUnits": "5000000000000000",
+      "volume1BaseUnits": "665108529932332030",
+      "volume0Formatted18Decimals": "0.005",
+      "volume1Formatted18Decimals": "0.66510852993233203",
+      "lastSwapTransactionHash": "0x559e645d1d126adba8821534113023efd68cd6f533435164b65e7be0f1b1fb1e"
+    }
+  ],
+  "supportedTokensWithoutFactoryPair": [
+    "NVDA",
+    "AAPL",
+    "SPCX",
+    "OPENAI",
+    "ANTHROPIC",
+    "PLTR",
+    "NFLX",
+    "AMD"
+  ],
+  "recentSwapCount30Days": 0,
+  "findings": {
+    "factorySourceExactMatch": true,
+    "supportedPairRuntimeExactMatch": true,
+    "implementationIntegrityEstablished": true,
+    "officialProvenanceEstablished": false,
+    "recentIndependentActivityEstablished": false,
+    "meaningfulLiquidityEstablished": false
+  },
+  "admissionDecision": "withhold",
+  "adapterDeploymentAuthorized": false,
+  "reasons": [
+    "No official or protocol-owner attribution was found for the factory; creator and fee setter are the same unattributed EOA.",
+    "No reviewed supported-token pair has Swap activity in the last 30 days.",
+    "The only supported-token reserves are approximately 0.001604 and 0.015 alternate WETH, with no approved liquidity threshold or independent market-depth evidence.",
+    "Exact upstream source proves implementation integrity, not venue ownership, operations, liquidity durability, or production suitability."
+  ],
+  "reconsiderationGates": [
+    "Credible public venue ownership or protocol attribution.",
+    "A reviewed quantitative liquidity and price-impact threshold.",
+    "Recent independent Swap activity and sustained volume, not activity created by Perm evidence transactions.",
+    "Fresh source, bytecode, reserve, and fork-execution review before any deployment or router registration."
+  ],
+  "boundary": "This review permits dormant adapter development and fork testing only. It does not authorize deployment, router registration, hosted quoting, or release claims."
+}

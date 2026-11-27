@@ -1,0 +1,62 @@
+name: Testnet fork and release rehearsal
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: read
+
+env:
+  NEXT_TELEMETRY_DISABLED: "1"
+
+jobs:
+  latest-state:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.21.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.20.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Exercise live DNS-pinned release-evidence download
+        run: pnpm release:test-evidence:live
+      - name: Real v4 pool integration on latest finalized testnet state
+        env:
+          RH_TESTNET_RPC_URL: ${{ secrets.RH_TESTNET_RPC_URL }}
+        run: |
+          test -n "$RH_TESTNET_RPC_URL" || { echo "RH_TESTNET_RPC_URL is required"; exit 1; }
+          pnpm contracts:test:fork
+      - name: Rehearse complete Router v2 deployment and post-deploy validation
+        env:
+          RH_TESTNET_RPC_URL: ${{ secrets.RH_TESTNET_RPC_URL }}
+          TIMELOCK_PROPOSER_ADDRESS: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+          TIMELOCK_DELAY_SECONDS: "60"
+        run: pnpm contracts:rehearse:testnet
+      - name: Validate rehearsal manifest
+        run: |
+          node <<'NODE'
+          const m = require("./deployments/robinhood-testnet.rehearsal.json");
+          const hash = /^0x[0-9a-f]{64}$/i;
+          const valid = m.routerVersion === 2
+            && m.postDeploymentChecks === "passed"
+            && m.releaseStatus === "rehearsal"
+            && m.executionReady === false
+            && m.timelock
+            && m.timelockDelaySeconds === 60
+            && m.hookProviderStatus === "disabled-pending-review"
+            && Array.isArray(m.aggregatorHooks) && m.aggregatorHooks.length === 0
+            && hash.test(m.reservedProviderIds?.uniswapV4AggregatorHook || "")
+            && Object.keys(m.runtimeCodehashes || {}).length === 4
+            && Object.values(m.runtimeCodehashes).every((value) => hash.test(value))
+            && Object.keys(m.dependencyCodehashes || {}).length === 8
+            && Object.values(m.dependencyCodehashes).every((value) => hash.test(value));
+          if (!valid) throw new Error("Rehearsal manifest failed its fail-closed release boundary");
+          NODE

@@ -1,0 +1,20 @@
+{
+  "chainId": 4663,
+  "fork": false,
+  "router": "0x155bc06240dE046112e86C63a35f8b954AF32Ea2",
+  "transactionHash": "0x2c4d412e1d6dd8fa90b4d4476337e4ee2f51bd4e4388d17a27f8fc863fc7d99c",
+  "explorerUrl": "https://robinhoodchain.blockscout.com/tx/0x2c4d412e1d6dd8fa90b4d4476337e4ee2f51bd4e4388d17a27f8fc863fc7d99c",
+  "blockNumber": "121287077",
+  "gasUsed": "315136",
+  "account": "0x141DB8c1C42B0fa5b13eE17136e4E037597886a8",
+  "tokenOut": "NVDA",
+  "amountInWei": "500000000000000",
+  "amountOut": "6333552858193761",
+  "grossFee": "1000000000000",
+  "rebate": "250000000000",
+  "netFee": "750000000000",
+  "routeSteps": 1,
+  "selectedRoute": "Uniswap v4 direct pool",
+  "proofPageVerified": true,
+  "at": "2026-11-23T08:54:43.838Z"
+}

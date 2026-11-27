@@ -1,0 +1,10 @@
+.staging/
+.env
+.env.*
+!.env.example
+deployments/*.staging.json
+deployments/*.rehearsal.json
+.hardhat-cache/
+contracts/artifacts/
+coverage/
+coverage.json

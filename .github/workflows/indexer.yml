@@ -1,0 +1,46 @@
+name: Settlement indexer
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/5 * * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: robinhood-testnet-indexer
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.event_name == 'workflow_dispatch' || vars.PERM_INDEXER_ENABLED == '1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.21.0
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.20.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Index finalized configured-router logs
+        env:
+          DATABASE_URL: ${{ secrets.PERM_INDEXER_DATABASE_URL }}
+          RH_TESTNET_RPC_URL: ${{ secrets.RH_TESTNET_RPC_URL }}
+          PERM_INDEXER_MODE: ${{ vars.PERM_INDEXER_MODE }}
+          PERM_INDEXER_CHAIN_ID: ${{ vars.PERM_INDEXER_CHAIN_ID }}
+          PERM_INDEXER_ROUTER_ADDRESS: ${{ vars.PERM_INDEXER_ROUTER_ADDRESS }}
+          PERM_INDEXER_ROUTER_VERSION: ${{ vars.PERM_INDEXER_ROUTER_VERSION }}
+          PERM_INDEXER_DEPLOYMENT_BLOCK: ${{ vars.PERM_INDEXER_DEPLOYMENT_BLOCK }}
+          PERM_INDEXER_CONFIRM_NON_RELEASE: ${{ vars.PERM_INDEXER_CONFIRM_NON_RELEASE }}
+          INDEXER_CONFIRMATIONS: "12"
+        run: |
+          test -n "$DATABASE_URL" || { echo "PERM_INDEXER_DATABASE_URL is required"; exit 1; }
+          test -n "$RH_TESTNET_RPC_URL" || { echo "RH_TESTNET_RPC_URL is required"; exit 1; }
+          test -n "$PERM_INDEXER_MODE" || { echo "PERM_INDEXER_MODE is required"; exit 1; }
+          pnpm indexer:run
