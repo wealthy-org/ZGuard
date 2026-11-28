@@ -156,10 +156,11 @@ export function createZGuardMcpServer(opts: ZGuardMcpOptions = {}) {
     version: "0.1.0",
   });
 
-  // 1. guard_payment: Offline quote-match when no API key or simulate=false; Hosted API when simulate=true + API key
+  // 1. guard_payment: hosted /v1/guard (quote + simulation + server-required checks) whenever an API key is set,
+  //    unless the caller passes simulate=false; offline quote-match otherwise (flagged, never silently "full").
   server.tool(
     "guard_payment",
-    "Verify an x402 payment authorization or EVM payment transaction against the quoted payment on Robinhood Chain (Testnet 46630 or Mainnet 4663). Runs offline without API key unless simulate=true.",
+    "Verify an x402 payment authorization or EVM payment transaction against the quoted payment on Robinhood Chain (Testnet 46630 or Mainnet 4663). With an API key it runs the hosted guard (quote + simulation) by default; simulate=false or no key = offline quote-match only (flag offline:quote-only). simulate=true without a key never returns allow.",
     {
       network: z.string().default(defaultNetwork),
       quote: z.object({
@@ -193,19 +194,31 @@ export function createZGuardMcpServer(opts: ZGuardMcpOptions = {}) {
           .optional(),
         tx: z.any().optional(),
       }),
-      simulate: z.boolean().default(false),
+      simulate: z.boolean().optional(),
     },
     async (args) => {
+      const hosted = args.simulate ?? Boolean(apiKey);
       const req: GuardRequest = {
         network: args.network,
         quote: args.quote,
         payload: args.payload as GuardRequest["payload"],
-        checks: args.simulate ? ["quote", "simulation"] : ["quote"],
+        checks: hosted ? ["quote", "simulation"] : ["quote"],
       };
 
-      if (!args.simulate || !apiKey) {
+      if (!hosted || !apiKey) {
         const localRes = guardOffline({ ...req, checks: ["quote"] });
-        return formatToolJson(localRes);
+        const flags = [...(localRes.flags ?? []), "offline:quote-only"];
+        if (args.simulate === true && localRes.decision === "allow") {
+          // Simulation was requested but cannot run without a key: fail closed instead of a quote-only allow.
+          return formatToolJson({
+            ...localRes,
+            decision: "abstain",
+            reason: "simulation requested but no ZGUARD_API_KEY: only the offline quote-match ran",
+            expires_at: null,
+            flags: [...flags, "simulation:skipped"],
+          });
+        }
+        return formatToolJson({ ...localRes, flags });
       }
 
       try {

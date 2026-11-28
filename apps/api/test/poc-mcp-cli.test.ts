@@ -137,3 +137,44 @@ describe("[CLI-1] zguard token-risk exit status follows the verdict", () => {
   it("allow → exit 0", async () => assert.equal(await run("allow"), 0));
 });
 
+
+describe("[MCP-5] guard_payment defaults (gap: simulate=false default)", () => {
+  const body = {
+    network: "eip155:46630",
+    quote: { asset: RHC_TESTNET_ASSETS.USDG.address, payTo: "0x000000000000000000000000000000000000aaaa", amount: "1000", chainId: 46630 },
+    payload: {
+      type: "eip3009",
+      authorization: {
+        from: "0x54b83d1e6Ee818FFB96D260Fc3E4dfc3Aaf03f79",
+        to: "0x000000000000000000000000000000000000aaaa",
+        value: "1000",
+        domain: RHC_TESTNET_ASSETS.USDG.eip712Domain,
+      },
+    },
+  };
+  const hostedAllow = (calls: string[]) =>
+    (async (url: string | URL | Request) => {
+      calls.push(String(url));
+      return new Response(
+        JSON.stringify({ decision: "allow", reason: "hosted", codes: [], payload_hash: "0x", expires_at: null, network: "eip155:46630", checks: {}, flags: [], charged: null }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      );
+    }) as unknown as typeof fetch;
+
+  it("with an API key and no simulate flag, the hosted guard runs (quote + simulation)", async () => {
+    const calls: string[] = [];
+    const r = (await callTool("guard_payment", body, hostedAllow(calls), "zg_test_key")) as GuardResponse;
+    assert.equal(r.reason, "hosted");
+    assert.ok(calls.some((u) => u.endsWith("/v1/guard")));
+  });
+
+  it("simulate=false stays offline and says so; simulate=true without a key never allows", async () => {
+    const calls: string[] = [];
+    const off = (await callTool("guard_payment", { ...body, simulate: false }, hostedAllow(calls), "zg_test_key")) as GuardResponse;
+    assert.equal(calls.length, 0);
+    assert.ok(off.flags.includes("offline:quote-only"));
+    const noKey = (await callTool("guard_payment", { ...body, simulate: true }, hostedAllow(calls))) as GuardResponse;
+    assert.notEqual(noKey.decision, "allow");
+    assert.ok(noKey.flags.includes("simulation:skipped"));
+  });
+});
