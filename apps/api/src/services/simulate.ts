@@ -486,6 +486,12 @@ export async function simulateOnRhc(
       }
     }
 
+    // `before` is read at the same state that was simulated: replaying a mined tx at a past block must not mix in
+    // balances from `latest` (gap SIM open note).
+    const at: { blockNumber: bigint } | { blockTag: "latest" | "pending" | "safe" | "finalized" | "earliest" } =
+      /^0x[0-9a-fA-F]+$/.test(blockTag)
+        ? { blockNumber: BigInt(blockTag) }
+        : { blockTag: (["latest", "pending", "safe", "finalized", "earliest"].includes(blockTag) ? blockTag : "latest") as "latest" };
     const balanceChanges: BalanceChange[] = [];
     for (const [key, delta] of netDeltas.entries()) {
       if (delta === 0n) continue;
@@ -494,7 +500,7 @@ export async function simulateOnRhc(
       let symbol: string | undefined;
       try {
         if (token === "ETH") {
-          before = await client.getBalance({ address: addr as Hex });
+          before = await client.getBalance({ address: addr as Hex, ...at });
           symbol = "ETH";
         } else {
           const [bal, sym] = await Promise.all([
@@ -503,6 +509,7 @@ export async function simulateOnRhc(
               abi: ERC20_META_ABI,
               functionName: "balanceOf",
               args: [addr as Hex],
+              ...at,
             }),
             client
               .readContract({

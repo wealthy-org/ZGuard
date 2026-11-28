@@ -129,3 +129,22 @@ describe("[SIM-2] allowances via Permit2 and ERC-721", () => {
     assert.equal(r.decision, "allow");
   });
 });
+
+describe("[SIM-3] replay at a past block reads balances at that block", () => {
+  it("balance `before` comes from the simulated block, not latest", async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const histClient = {
+      getBlock: async () => ({ number: 1n, timestamp: BigInt(Math.floor(Date.now() / 1000)) }),
+      readContract: async (a: Record<string, unknown>) => { seen.push(a); if (a.functionName === "balanceOf") return 1000n; return "TKN"; },
+      getBalance: async (a: Record<string, unknown>) => { seen.push(a); return 0n; },
+    } as unknown as PublicClient;
+    // ERC-20 Transfer USER → SPENDER of 10 in the simulated logs
+    simLogs = [{ address: TOKEN, topics: ["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", word(USER.address), word(SPENDER)], data: `0x${(10).toString(16).padStart(64, "0")}` }];
+    const r = await simulateOnRhc(config, histClient, req({ type: "evm_tx", tx: { from: USER.address, to: TOKEN, data: "0x", value: "0" } } as never), "0x1f4");
+    const balanceReads = seen.filter((a) => a.functionName === "balanceOf");
+    assert.ok(balanceReads.length > 0, JSON.stringify(r.notes));
+    for (const b of balanceReads) assert.equal(b.blockNumber, 500n);
+    const sim = rpcCalls.find((c) => c.method === "eth_simulateV1");
+    assert.equal(sim?.params[1], "0x1f4");
+  });
+});
