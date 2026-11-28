@@ -13,6 +13,11 @@
  *   zguard-terminal token-buyback-plan <eth> [--token addr] [--slippage-bps 300] [--out file]   (4663)
  *   zguard-terminal token-status [token]                                                      (4663)
  *   zguard-terminal token-metadata [--write file]                                             (46630)
+ *   zguard-terminal showcase-testnet [--live] [--pace ms] [--json]                            (46630)
+ *
+ * showcase-testnet is read-only: it re-checks every live testnet deployment (API, Perm router/adapter,
+ * PermTimelock roles, Ops Safe, deploy/handoff txs) and prints explorer links. --live adds two paid
+ * /v1/verify calls with ZGUARD_API_KEY (the key is read from the environment, never printed).
  *
  * The token-* commands never sign: they dry-run against the chain and write a Safe Transaction Builder
  * batch for the ZGuard Ops Safe (launcher, deployer, creator-fee recipient, buyback wallet).
@@ -70,10 +75,13 @@ import {
   type SafeTxBuilderFile,
   type TokenChainReader,
 } from "./token.js";
+import { runTestnetShowcase, SHOWCASE_CHAIN_ID, type ShowcaseReader, type ShowcaseSection } from "./showcase.js";
 
 const RED = "\x1b[41m\x1b[97m";
 const GREEN = "\x1b[32m";
 const DIM = "\x1b[2m";
+const BOLD = "\x1b[1m";
+const FAIL = "\x1b[31m";
 const RESET = "\x1b[0m";
 
 function parseArgs(argv: string[]) {
@@ -84,7 +92,7 @@ function parseArgs(argv: string[]) {
     if (a.startsWith("--")) {
       const key = a.slice(2);
       const next = argv[i + 1];
-      if (key === "yes" || key === "help") flags[key] = true;
+      if (key === "yes" || key === "help" || key === "live" || key === "json") flags[key] = true;
       else if (next !== undefined && !next.startsWith("--")) {
         flags[key] = next;
         i++;
@@ -107,6 +115,7 @@ function usage(): never {
   zguard-terminal token-buyback-plan <eth> [--token addr] [--slippage-bps 300] [--out file]   (4663)
   zguard-terminal token-status [token]                                                      (4663)
   zguard-terminal token-metadata [--write file]                                             (46630)
+  zguard-terminal showcase-testnet [--live] [--pace ms] [--json]                            (46630, read-only)
 
 Env: TERMINAL_PRIVATE_KEY, ZGUARD_API_KEY, ZGUARD_API_URL, ZGUARD_TERMINAL_CHAIN, RHC_RPC_URL`);
   process.exit(0);
@@ -138,7 +147,7 @@ async function main(): Promise<void> {
   const [cmd, ...rest] = positional;
   if (!cmd || flags.help) usage();
 
-  const chainId = Number(flags.network ?? process.env.ZGUARD_TERMINAL_CHAIN ?? 46630);
+  const chainId = cmd === "showcase-testnet" ? SHOWCASE_CHAIN_ID : Number(flags.network ?? process.env.ZGUARD_TERMINAL_CHAIN ?? 46630);
   if (chainId !== 46630 && chainId !== 4663) throw new Error("--network must be 46630 (testnet) or 4663 (mainnet)");
   const rpc = process.env.RHC_RPC_URL?.trim() || (chainId === 46630 ? RHC_PUBLIC_RPC_TESTNET : RHC_PUBLIC_RPC_MAINNET);
   const chain = chainFor(chainId, rpc);
@@ -226,6 +235,37 @@ async function main(): Promise<void> {
   }
 
   switch (cmd) {
+    case "showcase-testnet": {
+      const pace = flags.pace ? Number(flags.pace) : 0;
+      const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+      const apiKey = flags.live ? process.env.ZGUARD_API_KEY?.trim() : undefined;
+      if (flags.live && !apiKey) throw new Error("--live needs ZGUARD_API_KEY in the environment");
+      const printSection = async (sec: ShowcaseSection) => {
+        if (flags.json) return;
+        console.log(`\n${BOLD}${sec.title}${RESET}`);
+        const width = Math.max(...sec.rows.map((r) => r.label.length));
+        for (const r of sec.rows) {
+          if (pace) await sleep(pace);
+          const mark = r.ok ? `${GREEN}✓${RESET}` : `${FAIL}✗${RESET}`;
+          console.log(`  ${mark} ${r.label.padEnd(width)}  ${r.ok ? "" : FAIL}${r.value}${RESET}`);
+          if (r.link) console.log(`    ${DIM}${r.link}${RESET}`);
+        }
+      };
+      if (!flags.json) console.log(`${BOLD}ZGuard · testnet showcase${RESET} ${DIM}(read-only, no key, no signing · ${rpc})${RESET}`);
+      const report = await runTestnetShowcase({
+        reader: publicClient as unknown as ShowcaseReader,
+        apiUrl,
+        ...(apiKey ? { apiKey } : {}),
+        onSection: printSection,
+      });
+      if (flags.json) console.log(JSON.stringify(report, null, 2));
+      else {
+        const color = report.failed ? FAIL : GREEN;
+        console.log(`\n${color}${BOLD}${report.passed}/${report.passed + report.failed} checks match the deploy evidence${RESET}`);
+      }
+      if (report.failed) process.exitCode = 1;
+      return;
+    }
     case "status": {
       console.log(`chain     ${chainId} (${rpc})`);
       console.log(`wallet    ${from ?? "(TERMINAL_PRIVATE_KEY not set)"}`);
