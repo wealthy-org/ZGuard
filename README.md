@@ -44,7 +44,7 @@ or the guard is disabled (`GuardDisabledError`).
 | ZK verifier contract `ZGuardQuoteVerifier.sol` | Accepts only SP1 gateway proofs. Config changes go through a 2-day timelock; ownership transfer is two-step. **Not deployed** | `forge test` (7 tests; fake proofs revert) |
 | ZK rule engine `packages/zk/quote-rules` | Rust `no_std`. Its public values are byte-identical to the TypeScript SDK | `cargo test` (5 tests) |
 | SP1 guest `packages/zk/sp1-quote-guest` | **Scaffold.** It has not been built with `cargo prove build`, has no vkey and no prover service | — |
-| Halo2 circuit `packages/zk/halo2-quote-circuit` | **Circuit + prover + Solidity verifier, not deployed.** PSE Halo2-KZG (k=13, SHPLONK) over the canonical eip3009 quote/tx JSON; proves Q-001/Q-002, hints Q-003/4/6/7 like SP1, same public values. `Halo2QuoteVerifier.sol` is generated (CI diffs it), `ZGuardHalo2QuoteVerifier.sol` wraps it (~483k gas). Q-005/Q-DECODE stay SP1-only. The API does not run the prover; `ZGUARD_ZK_HALO2_ENABLED=false` | `.github/workflows/halo2.yml`: `cargo test` (MockProver + real KZG proof), verifier diff, `forge test --match-contract Halo2` |
+| Halo2 circuit `packages/zk/halo2-quote-circuit` | **Circuit + prover + Solidity verifier, not deployed.** PSE Halo2-KZG (k=13, SHPLONK) over the canonical eip3009 quote/tx JSON; proves Q-001/Q-002, hints Q-003/4/6/7 like SP1, same public values. `Halo2QuoteVerifier.sol` is generated (CI diffs it), `ZGuardHalo2QuoteVerifier.sol` wraps it (~483k gas). Q-005/Q-DECODE stay SP1-only. **Wired into the API** (see "Halo2 attestations" below): GitHub Actions proves, the API accepts a proof only through the onchain verifier. Testnet verifier deploy: operator step | `.github/workflows/halo2.yml`: `cargo test` (MockProver + real KZG proof), verifier diff, `forge test --match-contract Halo2`, API ↔ prover ↔ anvil end-to-end; `halo2-worker.test.ts` (11 offline) |
 | ZK attestations from the API | Stay `pending` until a prover URL, a vkey and a verifier are configured. `verified` is set only from a `verifySp1QuoteProof` receipt | `zk-honesty.test.ts` |
 | Browser wallet in the web app | Connect uses `eth_requestAccounts` + `wallet_switchEthereumChain` only; nothing is signed on connect | `apps/web/test/wallet.test.ts` |
 
@@ -118,6 +118,32 @@ A failing run is red and GitHub emails the repo owner. Repository secrets: `PERM
 
 The proof covers the quote scope only: payTo/amount equality, commitments and the verdict bitmask.
 Simulation and token risk are never part of the proof.
+
+### Halo2 attestations (free prover on GitHub Actions)
+
+```
+/v1/verify or /v1/guard (system halo2-kzg, eip3009 rail)
+  → attestation "pending", job queued, repository_dispatch "halo2-prove"
+  → .github/workflows/halo2-prover.yml: GET /v1/zk/halo2/jobs → zguard-halo2 prove-jobs → POST /v1/zk/halo2/results
+  → API: wrapper codehash check, eth_call ZGuardHalo2QuoteVerifier.verifyQuote == committed public values → "proven"
+  → with ZGUARD_ZK_VERIFIER_PRIVATE_KEY: verifyAndRecord receipt carrying this decisionId → "verified"
+```
+
+Inputs outside the circuit (Q-005, Q-DECODE, other rails, policy overrides) stay `pending` with the reason in
+`note`; a rejected proof or a worker error is `failed`; an RPC outage or a wrong verifier is retried, never failed.
+`programVKey` of a halo2-kzg attestation is the keccak256 of the generated verifier's runtime code (the VK is
+baked into it), and `/v1/config` → `zk.halo2` shows whether the worker is ready.
+
+Operator steps (testnet 46630 only):
+
+1. `pnpm --filter @zguard/zk deploy:halo2` (key `ZGUARD_DEPLOYER_PRIVATE_KEY`; refuses any chain but 46630).
+2. `pnpm --filter @zguard/zk record:halo2 <wrapper>` records the committed allow and deny Q-001 proofs as
+   onchain evidence; `check:halo2 <wrapper>` re-checks everything read-only.
+3. API env: `ZGUARD_ZK_SYSTEM=halo2-kzg`, `ZGUARD_ZK_HALO2_ENABLED=true`, `ZGUARD_ZK_HALO2_VERIFIER_ADDRESS`,
+   `ZGUARD_ZK_WORKER_SECRET` (≥16 chars), optional `ZGUARD_ZK_GH_DISPATCH_TOKEN` (fine-grained, Contents: write)
+   and `ZGUARD_ZK_VERIFIER_PRIVATE_KEY` (testnet gas for `verified`).
+4. GitHub secret `ZGUARD_ZK_WORKER_SECRET` (same value). Without a dispatch token the 6-hourly schedule picks
+   jobs up.
 
 ## Local trading terminal (`zguard-terminal`)
 
