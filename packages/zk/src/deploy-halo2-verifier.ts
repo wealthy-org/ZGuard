@@ -7,7 +7,9 @@
  *   pnpm --filter @zguard/zk check:halo2 <wrapper>     read-only: codehash + both proofs via eth_call (no key needed)
  *
  * Key: ZGUARD_DEPLOYER_PRIVATE_KEY (env or root .env). The script refuses any chain other than 46630, both by
- * configuration and by asking the RPC for its chainId.
+ * configuration and by asking the RPC for its chainId. RPC: ZGUARD_HALO2_DEPLOY_RPC_URL, else
+ * ZGUARD_RHC_TESTNET_RPC_URL, else the public testnet RPC. ZGUARD_RHC_RPC_URL is ignored on purpose: in the API it is
+ * the active-chain RPC and often points at mainnet.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -57,9 +59,11 @@ function loadProofFixtures(): ProofFixture[] {
   return raw.fixtures.filter((f) => f.covered && (EVIDENCE as readonly string[]).includes(f.name));
 }
 
+class Refusal extends Error {}
+
+/** Throws instead of process.exit(): on Windows an exit with open sockets trips a libuv assertion. */
 function die(msg: string): never {
-  console.error(`[ZGuard Halo2] ${msg}`);
-  process.exit(1);
+  throw new Refusal(`[ZGuard Halo2] ${msg}`);
 }
 
 async function main() {
@@ -69,7 +73,7 @@ async function main() {
 
   const chainId = Number(process.env.ZGUARD_ACTIVE_CHAIN_ID || RHC_TESTNET_CHAIN_ID);
   if (chainId !== RHC_TESTNET_CHAIN_ID) die(`testnet-only script: ZGUARD_ACTIVE_CHAIN_ID=${chainId}, expected ${RHC_TESTNET_CHAIN_ID}`);
-  const rpcUrl = process.env.ZGUARD_RHC_RPC_URL || RHC_PUBLIC_RPC_TESTNET;
+  const rpcUrl = process.env.ZGUARD_HALO2_DEPLOY_RPC_URL || process.env.ZGUARD_RHC_TESTNET_RPC_URL || RHC_PUBLIC_RPC_TESTNET;
   const chain = defineChain({
     id: RHC_TESTNET_CHAIN_ID,
     name: "Robinhood Chain Testnet",
@@ -99,7 +103,8 @@ async function main() {
       })) as boolean;
       console.log(`[ZGuard Halo2]   recorded onchain as zguard-halo2-evidence-${f.name}: ${done}`);
     }
-    process.exit(ok ? 0 : 1);
+    if (!ok) process.exitCode = 1;
+    return;
   }
 
   const pk = (process.env.ZGUARD_DEPLOYER_PRIVATE_KEY || "").trim();
@@ -158,11 +163,11 @@ async function main() {
     });
     const r = await pub.waitForTransactionReceipt({ hash, timeout: 120_000 });
     console.log(`[ZGuard Halo2] ${f.name} verdict=${f.verdict} mask=${f.mask} → ${r.status} gas ${r.gasUsed} ${explorer}/tx/${hash}`);
-    if (r.status !== "success") process.exit(1);
+    if (r.status !== "success") die(`${f.name}: verifyAndRecord reverted`);
   }
 }
 
 main().catch((err) => {
   console.error(err instanceof Error ? err.message : err);
-  process.exit(1);
+  process.exitCode = 1;
 });
