@@ -7,6 +7,9 @@
  * [TR-2] Proxies: mint selectors were only searched in the proxy forwarder, and a live upgrade authority
  *        (EIP-1967 admin, beacon owner, UUPS owner/roles) was ignored.
  * [TR-3] mint() with no owner()/getOwner()/admin() getter (AccessControl or permissionless) counted as dead.
+ * [TR-6] generic `other` tokens: T-LP (liquidity never observed) was a flag on an allow → abstain unless
+ *        ZGUARD_ALLOW_UNDETECTED_LP=true; pausable heuristic (paused → deny, live pause authority → abstain T-PAUSE);
+ *        mainnet pons V1 launches are confirmed by factory.getLaunchedToken instead of an out-of-range getLogs.
  */
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -67,8 +70,9 @@ const registry = {
 } as unknown as RhcRegistryService;
 
 const config = loadConfig({ ...process.env, DATABASE_URL: "", ZGUARD_ENABLE_URL_FETCH: "false" });
-const evaluate = (state: Record<string, Account>, chainId = 46630) =>
-  evaluateTokenRiskRhc({ config, client: fakeClient(state), registry, chainId, tokenAddress: TOKEN });
+const evaluate = (state: Record<string, Account>, chainId = 46630, cfg = config) =>
+  evaluateTokenRiskRhc({ config: cfg, client: fakeClient(state), registry, chainId, tokenAddress: TOKEN });
+const lpOptIn = loadConfig({ ...process.env, DATABASE_URL: "", ZGUARD_ENABLE_URL_FETCH: "false", ZGUARD_ALLOW_UNDETECTED_LP: "true" });
 
 const realFetch = globalThis.fetch;
 before(() => {
@@ -153,7 +157,7 @@ describe("[TR-2] proxies", () => {
 
   it("EIP-1167 clone of a fixed-supply implementation is not flagged", async () => {
     const clone = `0x363d3d373d3d3d363d73${IMPL.slice(2)}5af43d82803e903d91602b57fd5bf3` as Hex;
-    const r = await evaluate({ [TOKEN]: { code: clone, reads: meta }, [IMPL]: { code: codeWith("a9059cbb") } }, 4663);
+    const r = await evaluate({ [TOKEN]: { code: clone, reads: meta }, [IMPL]: { code: codeWith("a9059cbb") } }, 4663, lpOptIn);
     assert.equal(r.decision, "allow");
     assert.ok(!r.codes.includes("T-MINT"));
     assert.equal((r.liquidity.detail as Record<string, unknown>).proxy, "eip1167");
@@ -170,13 +174,50 @@ describe("[TR-3] mint authority without an owner getter", () => {
     assert.ok(r.codes.includes("T-MINT"));
   });
   it("mint() behind a provably renounced owner (owner() = 0x0) is not flagged", async () => {
-    const r = await evaluate({ [TOKEN]: { code: codeWith("40c10f19"), reads: { ...meta, owner: ZERO } } }, 4663);
+    const r = await evaluate({ [TOKEN]: { code: codeWith("40c10f19"), reads: { ...meta, owner: ZERO } } }, 4663, lpOptIn);
     assert.ok(!r.codes.includes("T-MINT"));
     assert.equal(r.decision, "allow");
   });
-  it("plain fixed-supply token is allow", async () => {
-    const r = await evaluate({ [TOKEN]: { code: codeWith("a9059cbb"), reads: meta } }, 4663);
-    assert.equal(r.decision, "allow");
+  it("plain fixed-supply token: abstain T-LP by default, allow (flagged) only with the operator opt-in", async () => {
+    const plain = { [TOKEN]: { code: codeWith("a9059cbb"), reads: meta } };
+    const r = await evaluate(plain, 4663);
+    assert.equal(r.decision, "abstain");
+    assert.deepEqual(r.codes, ["T-LP"]);
+    const opt = await evaluate(plain, 4663, lpOptIn);
+    assert.equal(opt.decision, "allow");
+    assert.deepEqual(opt.codes, ["T-LP"]);
   });
 });
 
+
+describe("[TR-6] pausable heuristic and pons V1 registry", () => {
+  it("currently paused token is deny T-PAUSE (even with the LP opt-in)", async () => {
+    const r = await evaluate({ [TOKEN]: { code: codeWith("a9059cbb", "5c975abb"), reads: { ...meta, paused: true, owner: ZERO } } }, 4663, lpOptIn);
+    assert.equal(r.decision, "deny");
+    assert.ok(r.codes.includes("T-PAUSE"));
+    assert.equal(r.authorities.pausable, true);
+  });
+  it("pause()/unpause() with a live owner is abstain T-PAUSE; renounced owner is not flagged", async () => {
+    const live = await evaluate({ [TOKEN]: { code: codeWith("a9059cbb", "8456cb59", "3f4ba83a"), reads: { ...meta, owner: OWNER } } }, 4663, lpOptIn);
+    assert.equal(live.decision, "abstain");
+    assert.ok(live.codes.includes("T-PAUSE"));
+    const dead = await evaluate({ [TOKEN]: { code: codeWith("a9059cbb", "8456cb59"), reads: { ...meta, owner: ZERO } } }, 4663, lpOptIn);
+    assert.ok(!dead.codes.includes("T-PAUSE"));
+    assert.equal(dead.decision, "allow");
+  });
+  it("mainnet token registered in the pons V1 factory is pons_curve (getLaunchedToken.exists)", async () => {
+    const V1 = "0xa5aab3f0c6eeadf30ef1d3eb997108e976351feb";
+    const launched = {
+      token: TOKEN, deployer: OWNER, pairedToken: OWNER, positionManager: OWNER, positionId: 7n, dexId: 0n, launchConfigId: 1n,
+      restrictionsEndBlock: 0n, supply: 10n ** 27n, isToken0: true, poolFee: 10000, exists: true, initialBuyAmount: 0n,
+    };
+    const r = await evaluate(
+      { [TOKEN]: { code: codeWith("a9059cbb"), reads: meta }, [V1]: { code: codeWith("aaaaaaaa"), reads: { getLaunchedToken: launched, graduationStatus: [1n, 2n, false] } } },
+      4663
+    );
+    assert.equal(r.kind, "pons_curve");
+    assert.equal(r.decision, "allow");
+    assert.equal(r.pons?.stack, "v1");
+    assert.equal(r.pons?.graduated, false);
+  });
+});

@@ -34,6 +34,7 @@ export type ReasonCode =
   | "T-TAX" // tax / snipe tax above configured threshold
   | "T-LP" // liquidity unlocked or undetected
   | "T-HOLDER" // holder concentration above configured threshold
+  | "T-PAUSE" // transfers paused now (deny) or a live pause authority on a non-allowlisted token (abstain)
   | "T-PONS" // pons curve state inconsistent / swept / near graduation
   | "T-UNKNOWN" // token kind / address unresolved -> abstain or flag
   | "C-FINDING" // content rules matched prompt-injection / invisible char / ticker lookalike

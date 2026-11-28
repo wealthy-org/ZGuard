@@ -118,7 +118,8 @@ const TABS: Tab[] = [
     codes: [
       ['T-MINT', 'mint authority still live (outside allowlist)'],
       ['T-TAX', 'tax above configured threshold'],
-      ['T-LP', 'liquidity not locked or not detected'],
+      ['T-LP', 'liquidity not locked or not detected (unknown token: abstain)'],
+      ['T-PAUSE', 'transfers paused (deny) or a live pause authority (abstain)'],
       ['T-HOLDER', 'holder concentration above threshold'],
       ['T-PONS', 'curve state inconsistent or near graduation'],
       ['T-UNKNOWN', 'token kind not recognized → abstain or flag'],

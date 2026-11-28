@@ -44,6 +44,16 @@ const ERC20_INSPECT_ABI = parseAbi([
   "function curve() view returns (address)",
 ]);
 
+/** Verified on Sourcify (4663, exact match): IPonsLaunchFactory registry getters. */
+const PONS_V1_FACTORY_ABI = parseAbi([
+  "struct LaunchedToken { address token; address deployer; address pairedToken; address positionManager; uint256 positionId; uint256 dexId; uint256 launchConfigId; uint256 restrictionsEndBlock; uint256 supply; bool isToken0; uint24 poolFee; bool exists; uint256 initialBuyAmount; }",
+  "function getLaunchedToken(address token) view returns (LaunchedToken)",
+  "function graduationStatus(address token) view returns (uint256 pairedPrincipal, uint256 threshold, bool graduated)",
+]);
+
+/** pause() / unpause() selectors (OpenZeppelin Pausable and most hand-rolled variants). */
+const PAUSE_SELECTORS_HEX = ["8456cb59", "3f4ba83a"];
+
 const PONS_V2_FACTORY_ABI = parseAbi([
   "struct LaunchedToken { address token; address curve; address deployer; address creatorFeeRecipient; address pairToken; uint256 graduationThreshold; uint24 poolFee; int24 tickSpacing; uint16 creatorTaxBps; bool buybackEnabled; uint8 phase; uint256 sweptQuote; uint256 sweptTokens; uint256 sweptAt; bool exists; }",
   "struct FeePolicy { address protocolFeeRecipient; uint16 protocolFeeShareBps; uint16 buybackBurnBps; uint16 hookFeeBps; uint16 maxInternalPriceImpactBps; }",
@@ -898,20 +908,21 @@ export async function evaluateTokenRiskRhc(params: {
       };
     }
 
-    // 4. Mainnet pons V1 Factory (`TokenLaunched` indexed topic1 = token) (§7.3)
+    // 4. Mainnet pons V1 Factory (§7.3). The factory's own registry `getLaunchedToken(token).exists` is the source
+    //    of truth: the former `eth_getLogs` scan from block 8,991,118 exceeded the RPC's 10k-block window (and used a
+    //    stale event signature), so real V1 launches (e.g. BUNEE, PCAT, CASHDOG) fell through to `other`.
     try {
-      const v1Logs = await client.getLogs({
+      const launched = (await client.readContract({
         address: PONS_V1_CONTRACTS.factory,
-        event: parseAbiItem(
-          "event TokenLaunched(address indexed token, address indexed deployer, address indexed dexFactory, address pairToken, address pool, uint256 dexId, uint256 launchCounter)"
-        ),
-        args: { token: addr },
-        fromBlock: 8_991_118n,
-        toBlock: "latest",
-      });
-      if (v1Logs.length > 0) {
+        abi: PONS_V1_FACTORY_ABI,
+        functionName: "getLaunchedToken",
+        args: [addr],
+      })) as { token: string; pairedToken: string; positionManager: string; positionId: bigint; poolFee: number; exists: boolean };
+      if (launched.exists && launched.token.toLowerCase() === addr.toLowerCase()) {
+        const graduation = (await client
+          .readContract({ address: PONS_V1_CONTRACTS.factory, abi: PONS_V1_FACTORY_ABI, functionName: "graduationStatus", args: [addr] })
+          .catch(() => null)) as readonly [bigint, bigint, boolean] | null;
         const holders = await holdersPromise;
-        const launchLog = v1Logs[0];
         const metadataScan = scanContent(
           { name: name ?? undefined, symbol: symbol ?? undefined, tokenAddress: addr },
           canonicalTickerMap
@@ -930,9 +941,12 @@ export async function evaluateTokenRiskRhc(params: {
             venue: "pons_v1_v3",
             locked: true,
             detail: {
-              pool: launchLog.args.pool,
-              pairToken: launchLog.args.pairToken,
+              pairToken: launched.pairedToken,
+              positionManager: launched.positionManager,
+              positionId: launched.positionId.toString(),
+              poolFee: launched.poolFee,
               locker: PONS_V1_CONTRACTS.liquidityLocker,
+              source: "factory.getLaunchedToken",
             },
           },
           tax: { buyBps: 100, sellBps: 100, snipeTaxBps: 0 },
@@ -940,8 +954,8 @@ export async function evaluateTokenRiskRhc(params: {
           pons: {
             factory: PONS_V1_CONTRACTS.factory,
             stack: "v1",
-            pairToken: launchLog.args.pairToken ?? null,
-            graduated: null,
+            pairToken: launched.pairedToken ?? null,
+            graduated: graduation ? graduation[2] : null,
             sellableTokens: null,
             reserves: null,
           },
@@ -994,9 +1008,18 @@ export async function evaluateTokenRiskRhc(params: {
     canonicalTickerMap
   );
 
+  // Pausable heuristic: a readable paused() or pause()/unpause() selectors in the (implementation) bytecode. Paused now
+  // = transfers frozen → deny. Pausable with a live authority (owner, roles or upgrade admin) → abstain T-PAUSE.
+  const hasPauseSelector = PAUSE_SELECTORS_HEX.some((sel) => bytecodeLower.includes(sel));
+  const pausable = pausedState !== null || hasPauseSelector;
+  const pauseAuthorityLive = pausable && (effectiveOwner !== null || hasAccessControl || proxy.upgradeable);
+
   const codes: ReasonCode[] = [];
   if (hasLiveMinter) {
     codes.push("T-MINT");
+  }
+  if (pausedState === true || pauseAuthorityLive) {
+    codes.push("T-PAUSE");
   }
   if (metadataScan.verdict === "findings") {
     codes.push("C-FINDING");
@@ -1008,13 +1031,17 @@ export async function evaluateTokenRiskRhc(params: {
   ) {
     codes.push("T-HOLDER");
   }
+  // Liquidity of a token that is neither canonical nor a pons launch is never observed here, so T-LP is real:
+  // without an operator opt-in (ZGUARD_ALLOW_UNDETECTED_LP=true) it is abstain, never a silent allow.
   codes.push("T-LP");
 
   let decision: Decision = "allow";
-  if (codes.includes("T-MINT") || codes.includes("C-FINDING") || codes.includes("T-HOLDER")) {
+  if (codes.includes("T-MINT") || codes.includes("C-FINDING") || codes.includes("T-HOLDER") || pausedState === true) {
     decision = "deny";
   } else if (name === null && symbol === null) {
     codes.push("T-UNKNOWN");
+    decision = "abstain";
+  } else if (codes.includes("T-PAUSE") || !config.allowUndetectedLp) {
     decision = "abstain";
   }
 
@@ -1047,7 +1074,7 @@ export async function evaluateTokenRiskRhc(params: {
     authorities: {
       owner: effectiveOwner ?? (proxy.upgradeable ? proxy.upgradeAuthority : null),
       mintable: hasLiveMinter,
-      pausable: pausedState !== null ? true : null,
+      pausable: pausable ? true : null,
     },
     pons: {
       factory: null,
