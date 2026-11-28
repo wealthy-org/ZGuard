@@ -7,12 +7,13 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { getAddress, keccak256, toHex, type Address, type Hex } from "viem";
 import { guardOffline, type GuardRequest } from "@zguard/sdk";
+import { HALO2_VERIFIER_CODEHASH, HALO2_VERIFIER_DEPLOYED_BYTECODE } from "@zguard/zk";
 import { demoPayment, runTestnetShowcase, TESTNET_DEPLOYMENT as D, type ShowcaseReader } from "@zguard/terminal";
 
 const ZERO = "0x0000000000000000000000000000000000000000";
 const ROLE = (s: string) => keccak256(toHex(s));
 
-function fakeChain(over: { routerOwner?: Address; delay?: bigint; failTx?: Hex } = {}) {
+function fakeChain(over: { routerOwner?: Address; delay?: bigint; failTx?: Hex; halo2Code?: Hex; unrecorded?: string } = {}) {
   const calls: string[] = [];
   const roles = new Set(
     [
@@ -27,7 +28,8 @@ function fakeChain(over: { routerOwner?: Address; delay?: bigint; failTx?: Hex }
     getChainId: async () => 46630,
     getBlockNumber: async () => 158_000_000n,
     getBlock: async () => ({ timestamp: 1_795_000_000n }),
-    getBytecode: async () => "0x6080604052" as Hex,
+    getBytecode: async ({ address }) =>
+      getAddress(address) === D.halo2Verifier ? (over.halo2Code ?? (HALO2_VERIFIER_DEPLOYED_BYTECODE as Hex)) : ("0x6080604052" as Hex),
     readContract: async ({ address, functionName, args }) => {
       calls.push(functionName);
       const a = getAddress(address);
@@ -50,6 +52,10 @@ function fakeChain(over: { routerOwner?: Address; delay?: bigint; failTx?: Hex }
           return 1n;
         case "VERSION":
           return "1.5.0";
+        case "halo2Verifier":
+          return D.halo2Verifier;
+        case "verifiedDecisionIds":
+          return D.halo2Evidence.some((id) => id !== over.unrecorded && keccak256(toHex(id)) === args![0]);
       }
       throw new Error(`unexpected ${functionName}`);
     },
@@ -59,7 +65,7 @@ function fakeChain(over: { routerOwner?: Address; delay?: bigint; failTx?: Hex }
         status: hash === over.failTx ? "reverted" : "success",
         blockNumber: 1n,
         from: D.deployer,
-        to: null,
+        to: "to" in t ? (D[t.to] as Address) : null,
         contractAddress: "creates" in t ? (D[t.creates] as Address) : null,
         logs: [{}],
       };
@@ -98,7 +104,7 @@ describe("showcase-testnet", () => {
     const api = fakeApi();
     const r = await runTestnetShowcase({ reader, fetchImpl: api.fetchImpl });
     assert.equal(r.failed, 0, JSON.stringify(r.sections.flatMap((s) => s.rows.filter((x) => !x.ok))));
-    assert.equal(r.passed, 34);
+    assert.equal(r.passed, 42);
     assert.equal(api.posts.length, 0);
     assert.ok(calls.every((c) => !/^(transfer|approve|schedule|execute)/.test(c)));
     const links = r.sections.flatMap((s) => s.rows.map((x) => x.link).filter(Boolean));
@@ -117,6 +123,14 @@ describe("showcase-testnet", () => {
     const r = await runTestnetShowcase({ reader, fetchImpl: fakeApi({ payTo: D.deployer }).fetchImpl });
     const red = r.sections.flatMap((s) => s.rows.filter((x) => !x.ok).map((x) => x.label));
     assert.deepEqual(red.sort(), ["PermRouter owner", "executeBatch after 600 s", "min delay", "payTo (x402)"].sort());
+  });
+
+  it("Halo2: pinned codehash equals the generated verifier; other code or a missing proof record turns red", async () => {
+    assert.equal(D.halo2VerifierCodehash, HALO2_VERIFIER_CODEHASH);
+    const { reader } = fakeChain({ halo2Code: "0x6080604052", unrecorded: D.halo2Evidence[1], failTx: D.txs[9].hash });
+    const r = await runTestnetShowcase({ reader, fetchImpl: fakeApi().fetchImpl });
+    const red = r.sections.flatMap((s) => s.rows.filter((x) => !x.ok).map((x) => x.label));
+    assert.deepEqual(red.sort(), ["Halo2Verifier codehash", "Halo2 proof · deny Q-001", "recorded · deny-q001-recipient"].sort());
   });
 
   it("API down is shown as failures, not hidden", async () => {

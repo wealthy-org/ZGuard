@@ -24,6 +24,13 @@ export const TESTNET_DEPLOYMENT = {
   v4Adapter: getAddress("0xC4Df49493a828F681160056cb6D46143B56593D0"),
   timelock: getAddress("0x3a9337f46858d246b2865f8ca4b6727666593186"),
   timelockDelaySeconds: 600n,
+  // Halo2-KZG quote verifier (gap H7): generated verifier + ZGuard wrapper, deployed from Akun A.
+  halo2Verifier: getAddress("0x8261405207e80edb82dcfc44d974e43d872a76b9"),
+  halo2Wrapper: getAddress("0x619e9da004686fde3970a6c6e059291e9934e752"),
+  /** keccak256 of the generated verifier's runtime code (= HALO2_VERIFIER_CODEHASH in @zguard/zk). */
+  halo2VerifierCodehash: "0xe0c0db0e2e29cec0b05a3b5624dd647ec40e72f1ade164609bd5799361357541",
+  /** decisionIds of the two committed fixtures recorded by `record:halo2`. */
+  halo2Evidence: ["zguard-halo2-evidence-allow", "zguard-halo2-evidence-deny-q001-recipient"],
   txs: [
     { label: "PermRouter deploy", hash: "0x1654e9dc382f6e1e743302d0e2ca19dcddc129ddfb65a2a39a9d051794e94daf", creates: "permRouter" },
     { label: "V4 adapter deploy", hash: "0xd8a418addfb4f9aef8d8271a02d75deb8590d49f810fa81f92a033f649867c80", creates: "v4Adapter" },
@@ -31,6 +38,10 @@ export const TESTNET_DEPLOYMENT = {
     { label: "PermTimelock deploy", hash: "0xdf036f406326b8188aadd84ca67a6a55b6fae01862227670b25978f2d7e1a2e1", creates: "timelock" },
     { label: "Safe 2-of-3 → scheduleBatch", hash: "0xcd8e46d152b1ed5c72200b9f8b0cd8c289727c1106a2bae3026065d4cba197f1" },
     { label: "executeBatch after 600 s", hash: "0x15968897d89376778d299d2e844ff5def5e90b6b54c1e5df8e5b6eaf1b6b50f9" },
+    { label: "Halo2Verifier deploy", hash: "0xe20a33fa348c74d8991c053e28d39a2d67f6e81259bb7befb4bf8d003d851b0e", creates: "halo2Verifier" },
+    { label: "Halo2 wrapper deploy", hash: "0xad4fb6915a989cb89caa0df52eb2e20f8ceb70e5b4e9a75a582b4a7a41048c61", creates: "halo2Wrapper" },
+    { label: "Halo2 proof · allow", hash: "0x838322fecf65bec47aa4f9f4f088544d1230d59c3d670e7c0bfb7c9653ef0a24", to: "halo2Wrapper" },
+    { label: "Halo2 proof · deny Q-001", hash: "0x61d1387f1114fdaac8f7f0391fa8708c2158f20e0b970fa9372a8a55063486b9", to: "halo2Wrapper" },
   ],
 } as const;
 
@@ -58,6 +69,14 @@ export const SHOWCASE_ABI = [
   { type: "function", name: "getThreshold", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   { type: "function", name: "nonce", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   { type: "function", name: "VERSION", stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
+  { type: "function", name: "halo2Verifier", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  {
+    type: "function",
+    name: "verifiedDecisionIds",
+    stateMutability: "view",
+    inputs: [{ type: "bytes32" }],
+    outputs: [{ type: "bool" }],
+  },
 ] as const;
 
 type ShowcaseFn = (typeof SHOWCASE_ABI)[number]["name"];
@@ -302,7 +321,35 @@ export async function runTestnetShowcase(opts: ShowcaseOptions): Promise<Showcas
     ],
   });
 
-  // 7. Transactions
+  // 7. Halo2 verifier: the deployed code is the generated verifier, and both fixture proofs are recorded onchain
+  await emit({
+    title: `Halo2-KZG quote verifier ${short(d.halo2Wrapper)}`,
+    rows: [
+      await safeRow("Halo2Verifier codehash", async () => {
+        const code = await reader.getBytecode({ address: d.halo2Verifier });
+        const hash = code && code.length > 2 ? keccak256(code) : null;
+        return {
+          value: hash ? `${short(hash)} · ${(code!.length - 2) / 2} bytes` : "no code",
+          ok: same(hash, d.halo2VerifierCodehash),
+          link: addressUrl(d.halo2Verifier),
+        };
+      }),
+      await safeRow("wrapper → verifier", async () => {
+        const v = await read(d.halo2Wrapper, "halo2Verifier");
+        return { value: same(v, d.halo2Verifier) ? `Halo2Verifier ${short(d.halo2Verifier)}` : String(v), ok: same(v, d.halo2Verifier), link: addressUrl(d.halo2Wrapper) };
+      }),
+      ...(await Promise.all(
+        d.halo2Evidence.map((id) =>
+          safeRow(`recorded · ${id.replace("zguard-halo2-evidence-", "")}`, async () => {
+            const done = (await read(d.halo2Wrapper, "verifiedDecisionIds", [keccak256(toHex(id))])) === true;
+            return { value: done ? "verified onchain" : "not recorded", ok: done };
+          })
+        )
+      )),
+    ],
+  });
+
+  // 8. Transactions
   const txRows: ShowcaseRow[] = [];
   for (const t of d.txs) {
     txRows.push(
@@ -311,12 +358,13 @@ export async function runTestnetShowcase(opts: ShowcaseOptions): Promise<Showcas
         const block = await reader.getBlock({ blockNumber: r.blockNumber });
         const when = new Date(Number(block.timestamp) * 1000).toISOString().replace("T", " ").slice(0, 19);
         const created = "creates" in t ? (d[t.creates] as Address) : null;
-        const ok = r.status === "success" && (!created || same(r.contractAddress, created));
+        const target = "to" in t ? (d[t.to] as Address) : null;
+        const ok = r.status === "success" && (!created || same(r.contractAddress, created)) && (!target || same(r.to, target));
         return { value: `${r.status} · block ${r.blockNumber} · ${when} UTC · ${r.logs.length} events`, ok, link: txUrl(t.hash) };
       })
     );
   }
-  await emit({ title: "Deploy & handoff transactions", rows: txRows });
+  await emit({ title: "Deploy, handoff & proof transactions", rows: txRows });
 
   const all = sections.flatMap((s) => s.rows);
   return { sections, passed: all.filter((r) => r.ok).length, failed: all.filter((r) => !r.ok).length };
