@@ -43,9 +43,9 @@ or the guard is disabled (`GuardDisabledError`).
 | MCP server (5 tools) | Implemented in `packages/mcp`; **not published to npm** (run from the repo) | live acceptance §9.6 |
 | ZK verifier contract `ZGuardQuoteVerifier.sol` | Accepts only SP1 gateway proofs. Config changes go through a 2-day timelock; ownership transfer is two-step. **Not deployed** | `forge test` (7 tests; fake proofs revert) |
 | ZK rule engine `packages/zk/quote-rules` | Rust `no_std`. Its public values are byte-identical to the TypeScript SDK | `cargo test` (5 tests) |
-| SP1 guest `packages/zk/sp1-quote-guest` | **Scaffold.** It has not been built with `cargo prove build`, has no vkey and no prover service | — |
-| Halo2 circuit `packages/zk/halo2-quote-circuit` | **Circuit + prover + Solidity verifier, not deployed.** PSE Halo2-KZG (k=13, SHPLONK) over the canonical eip3009 quote/tx JSON; proves Q-001/Q-002, hints Q-003/4/6/7 like SP1, same public values. `Halo2QuoteVerifier.sol` is generated (CI diffs it), `ZGuardHalo2QuoteVerifier.sol` wraps it (~483k gas). Q-005/Q-DECODE stay SP1-only. **Wired into the API** (see "Halo2 attestations" below): GitHub Actions proves, the API accepts a proof only through the onchain verifier. Testnet verifier deploy: operator step | `.github/workflows/halo2.yml`: `cargo test` (MockProver + real KZG proof), verifier diff, `forge test --match-contract Halo2`, API ↔ prover ↔ anvil end-to-end; `halo2-worker.test.ts` (11 offline) |
-| ZK attestations from the API | Stay `pending` until a prover URL, a vkey and a verifier are configured. `verified` is set only from a `verifySp1QuoteProof` receipt | `zk-honesty.test.ts` |
+| SP1 guest `packages/zk/sp1-quote-guest` | **Built in CI, no proof yet.** `cargo prove build` runs in CI and `programVKey` `0x001708b1…973c` is pinned; zkVM execution matches `quote-rules` on 7 fixtures. A Groth16 proof needs the paid SP1 prover network, so none exists and no SP1 verifier is deployed | `.github/workflows/sp1.yml` |
+| Halo2 circuit `packages/zk/halo2-quote-circuit` | **Circuit + prover + Solidity verifier, deployed on testnet 46630.** PSE Halo2-KZG (k=13, SHPLONK) over the canonical eip3009 quote/tx JSON; proves Q-001/Q-002, hints Q-003/4/6/7 like SP1, same public values. `Halo2QuoteVerifier.sol` is generated (CI diffs it), `ZGuardHalo2QuoteVerifier.sol` wraps it (~483k gas). Q-005/Q-DECODE stay SP1-only. **Wired into the API** (see "Halo2 attestations" below): GitHub Actions proves, the API accepts a proof only through the onchain verifier. Testnet: `Halo2Verifier` `0x8261…76b9` + wrapper `0x619e…e752`, allow and deny Q-001 proofs recorded onchain (see "Halo2 attestations"). Not on mainnet; generator not audited | `.github/workflows/halo2.yml`: `cargo test` (MockProver + real KZG proof), verifier diff, `forge test --match-contract Halo2`, API ↔ prover ↔ anvil end-to-end; `halo2-worker.test.ts` (11 offline) |
+| ZK attestations from the API | Stay `pending` until a prover and a verifier are configured. `proven` only after the onchain verifier accepts the proof (`eth_call`); `verified` only from a `verifySp1QuoteProof` / Halo2 `verifyAndRecord` receipt | `zk-honesty.test.ts` |
 | Browser wallet in the web app | Connect uses `eth_requestAccounts` + `wallet_switchEthereumChain` only; nothing is signed on connect | `apps/web/test/wallet.test.ts` |
 
 Phase 2 (not built): Base/Solana settlement relayers, `/v1/watch` webhooks, signed metadata badges,
@@ -145,6 +145,18 @@ Operator steps (testnet 46630 only):
 4. GitHub secret `ZGUARD_ZK_WORKER_SECRET` (same value). Without a dispatch token the 6-hourly schedule picks
    jobs up.
 
+Testnet deployment (2026-11-28, deployer `0x141DB8c1C42B0fa5b13eE17136e4E037597886a8`):
+
+| | Address / tx | Gas |
+|---|---|---|
+| `Halo2Verifier` (generated, codehash `0xe0c0db0e…7541`) | [`0x8261405207e80edb82dcfc44d974e43d872a76b9`](https://explorer.testnet.chain.robinhood.com/address/0x8261405207e80edb82dcfc44d974e43d872a76b9) · tx [`0xe20a33fa…1b0e`](https://explorer.testnet.chain.robinhood.com/tx/0xe20a33fa348c74d8991c053e28d39a2d67f6e81259bb7befb4bf8d003d851b0e) | 2,102,709 |
+| `ZGuardHalo2QuoteVerifier` (wrapper, `ZGUARD_ZK_HALO2_VERIFIER_ADDRESS`) | [`0x619e9da004686fde3970a6c6e059291e9934e752`](https://explorer.testnet.chain.robinhood.com/address/0x619e9da004686fde3970a6c6e059291e9934e752) · tx [`0xad4fb691…8c61`](https://explorer.testnet.chain.robinhood.com/tx/0xad4fb6915a989cb89caa0df52eb2e20f8ceb70e5b4e9a75a582b4a7a41048c61) | 686,538 |
+| `verifyAndRecord` allow (verdict 1, mask 0) | tx [`0x838322fe…0a24`](https://explorer.testnet.chain.robinhood.com/tx/0x838322fecf65bec47aa4f9f4f088544d1230d59c3d670e7c0bfb7c9653ef0a24) | 622,429 |
+| `verifyAndRecord` deny Q-001 (verdict 2, mask 1) | tx [`0x61d1387f…86b9`](https://explorer.testnet.chain.robinhood.com/tx/0x61d1387f1114fdaac8f7f0391fa8708c2158f20e0b970fa9372a8a55063486b9) | 622,453 |
+
+`pnpm --filter @zguard/zk check:halo2 0x619e9da004686fde3970a6c6e059291e9934e752` re-checks the codehash, both
+proofs via `eth_call` and both records, read-only. The hosted API issues halo2-kzg attestations only after step 3.
+
 ## Local trading terminal (`zguard-terminal`)
 
 A command-line terminal for RHC/pons bonding curves.
@@ -172,7 +184,8 @@ node packages/terminal/dist/cli.js sell 0x9118BD806cB3906Dc6d50a4409a9e9dF481723
 
 **Testnet showcase (read-only, for demos):** `showcase-testnet` re-checks everything live on 46630 and prints
 explorer links: API `/health` + `/v1/config`, an allow and a deny Q-001 verdict from the guard engine, PermRouter and
-V4 adapter owned by PermTimelock (delay 600 s), the timelock roles, the Ops Safe, and the deploy/handoff txs. No key,
+V4 adapter owned by PermTimelock (delay 600 s), the timelock roles, the Ops Safe, the Halo2 verifier (codehash +
+both proofs recorded), and the deploy/handoff/proof txs. No key,
 no signing; it exits 1 if anything no longer matches the evidence.
 
 ```bash
