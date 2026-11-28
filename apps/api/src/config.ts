@@ -164,6 +164,8 @@ export interface ZGuardAppConfig {
   maxTop10HolderBps: number | null;
   maxSnipeTaxBps: number | null;
   holderIndexerUrl: string | null;
+  /** `other` tokens (liquidity never observed) are abstain T-LP unless the operator opts in to allow. */
+  allowUndetectedLp: boolean;
 
   zkEnabled: boolean;
   zkSystem: ZkSystemId;
@@ -174,6 +176,13 @@ export interface ZGuardAppConfig {
   zkProgramVKey: string | null;
   zkVerifierPrivateKey: string | null;
   zkBatchSize: number;
+  /** ZGuardHalo2QuoteVerifier wrapper on the active chain (gap H7); required before Halo2 jobs are queued. */
+  zkHalo2VerifierAddress: string | null;
+  /** Shared secret of the Halo2 worker (`x-zguard-worker-key`, ≥16 chars); unset = worker endpoints disabled. */
+  zkWorkerSecret: string | null;
+  /** GitHub token (fine-grained, Contents: write on zkGhRepo) used for repository_dispatch; optional. */
+  zkGhDispatchToken: string | null;
+  zkGhRepo: string | null;
 }
 
 function parseOptionalInt(raw?: string): number | null {
@@ -315,14 +324,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ZGuardAppConfi
     maxTop10HolderBps: parseOptionalInt(env.ZGUARD_MAX_TOP10_HOLDER_BPS),
     maxSnipeTaxBps: parseOptionalInt(env.ZGUARD_MAX_SNIPE_TAX_BPS),
     holderIndexerUrl: env.ZGUARD_HOLDER_INDEXER_URL || null,
+    allowUndetectedLp: env.ZGUARD_ALLOW_UNDETECTED_LP === "true",
 
     zkEnabled: env.ZGUARD_ZK_ENABLED !== "false",
     zkSystem:
       env.ZGUARD_ZK_SYSTEM === "groth16-risc0" || env.ZGUARD_ZK_SYSTEM === "halo2-kzg"
         ? env.ZGUARD_ZK_SYSTEM
         : "groth16-sp1",
-    // Halo2 circuit + prover CLI + generated verifier exist (CI), but the API runs no prover and no verifier is
-    // deployed: opt-in only, and still yields `pending` (gap C2/C9/H7).
+    // Halo2 attestations (gap H7): opt-in. With a verifier address + worker secret, halo2-kzg attestations are
+    // queued for the GitHub Actions prover and become proven/verified only through the onchain verifier.
     zkHalo2Enabled: env.ZGUARD_ZK_HALO2_ENABLED === "true",
     zkSp1ProverUrl: env.ZGUARD_ZK_SP1_PROVER_URL || null,
     zkVerifierAddress: env.ZGUARD_ZK_VERIFIER_ADDRESS || null,
@@ -330,6 +340,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ZGuardAppConfi
     zkVerifierPrivateKey:
       env.ZGUARD_ZK_VERIFIER_PRIVATE_KEY || env.ZGUARD_DEPLOYER_PRIVATE_KEY || null,
     zkBatchSize: Number(env.ZGUARD_ZK_BATCH_SIZE ?? 10),
+    zkHalo2VerifierAddress: env.ZGUARD_ZK_HALO2_VERIFIER_ADDRESS?.trim() || null,
+    zkWorkerSecret:
+      env.ZGUARD_ZK_WORKER_SECRET && env.ZGUARD_ZK_WORKER_SECRET.trim().length >= 16
+        ? env.ZGUARD_ZK_WORKER_SECRET.trim()
+        : null,
+    zkGhDispatchToken: env.ZGUARD_ZK_GH_DISPATCH_TOKEN?.trim() || null,
+    zkGhRepo: env.ZGUARD_ZK_GH_REPO?.trim() || (env.ZGUARD_ZK_GH_DISPATCH_TOKEN ? "wealthy-org/ZGuard" : null),
   };
 }
 

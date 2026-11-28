@@ -60,6 +60,8 @@ export const zkAttestationsTable = pgTable("zguard_zk_attestations", {
   bn254PrecompileVerified: boolean("bn254_precompile_verified").notNull().default(false),
   status: text("status").$type<ZkAttestation["status"]>().notNull(),
   note: text("note"),
+  /** Internal prover input (canonical JSON + hints) for the Halo2 worker; never served publicly. */
+  proverJob: jsonb("prover_job").$type<Record<string, unknown>>(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

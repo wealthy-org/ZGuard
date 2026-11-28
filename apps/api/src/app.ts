@@ -14,7 +14,11 @@ import {
   type ChargedInfo,
   type CheckMode,
   type CheckName,
+  type Decision,
   type GuardRequest,
+  type ReasonCode,
+  type ZkAttestation,
+  type ZkSystemId,
   type GuardResponse,
   getEip712DomainStatus,
 } from "@zguard/sdk";
@@ -24,8 +28,19 @@ import {
   getProgramVKey,
   isPlaceholderProgramVKey,
   proveQuoteAttestationAsync,
+  type Halo2Job,
 } from "@zguard/zk";
 import { loadConfig, type ZGuardAppConfig } from "./config.js";
+import {
+  createHalo2Runtime,
+  halo2WorkerReady,
+  planHalo2Attestation,
+  processHalo2Result,
+  queueHalo2Job,
+  workerJobView,
+  type Halo2ResultInput,
+  type Halo2Runtime,
+} from "./services/halo2-worker.js";
 import {
   StorageUnavailableError,
   createStore,
@@ -79,6 +94,10 @@ export function tightenCheckModes(
 export interface AppDependencies {
   config?: ZGuardAppConfig;
   store?: StorageStore;
+  /** Halo2 verifier chain access (tests inject a mock); defaults to the active chain RPC. */
+  halo2Runtime?: Halo2Runtime;
+  /** fetch used for the GitHub repository_dispatch (tests inject a mock). */
+  dispatchFetch?: typeof fetch;
 }
 
 function extractBearerKey(c: Context): string | null {
@@ -107,6 +126,64 @@ export function createZGuardApp(deps: AppDependencies = {}): {
 
   function getClientForChain(chainId: number): PublicClient {
     return chainId === RHC_MAINNET_CHAIN_ID ? mainnetClient : testnetClient;
+  }
+
+  let halo2Runtime: Halo2Runtime | null = deps.halo2Runtime ?? null;
+  const getHalo2Runtime = (): Halo2Runtime =>
+    (halo2Runtime ??= createHalo2Runtime(
+      config,
+      getRpcUrlsForChain(config, config.activeChainId)[0],
+      config.activeChainId
+    ));
+
+  /** After the receipt is saved: Halo2 → queue + dispatch (awaited, short); SP1 → async prover settlement. */
+  async function settleZkAttestation(
+    att: ZkAttestation,
+    halo2Job: Halo2Job | null,
+    request: Pick<GuardRequest, "network" | "quote" | "payload">,
+    quoteCodes: ReasonCode[],
+    chainId: number
+  ): Promise<void> {
+    await store.upsertZkAttestation(att);
+    if (att.system === "halo2-kzg") {
+      if (halo2Job) {
+        await queueHalo2Job(config, store, att, halo2Job, deps.dispatchFetch).catch((e) =>
+          console.error("[zguard] halo2 queue failed:", e instanceof Error ? e.message : e)
+        );
+      }
+      return;
+    }
+    void proveQuoteAttestationAsync(att, {
+      rpcUrl: getRpcUrlsForChain(config, chainId)[0],
+      chainId,
+      sp1ProverUrl: config.zkSp1ProverUrl ?? undefined,
+      verifierAddress: config.zkVerifierAddress ?? undefined,
+      verifierPrivateKey: config.zkVerifierPrivateKey ?? undefined,
+      guestInput: buildSp1GuestInput(request, quoteCodes),
+      onUpdated: (upd) => store.upsertZkAttestation(upd),
+    });
+  }
+
+  /** Initial attestation; halo2-kzg gets its coverage/queue decision before the response is sent. */
+  function initialZkAttestation(
+    system: ZkSystemId,
+    decisionId: string,
+    request: Pick<GuardRequest, "network" | "quote" | "payload">,
+    quoteVerdict: Decision,
+    quoteCodes: ReasonCode[]
+  ): { att: ZkAttestation; halo2Job: Halo2Job | null } {
+    const att = buildInitialZkAttestation({
+      decisionId,
+      system,
+      request,
+      quoteVerdict,
+      quoteCodes,
+      verifierAddress: system === "halo2-kzg" ? config.zkHalo2VerifierAddress : config.zkVerifierAddress,
+      programVKeyOverride: config.zkProgramVKey,
+    });
+    if (system !== "halo2-kzg") return { att, halo2Job: null };
+    const plan = planHalo2Attestation(config, att, request, quoteCodes, quoteVerdict);
+    return { att: plan.att, halo2Job: plan.job };
   }
 
   // Kick off non-blocking USDG EIP-712 onchain domain check on both Testnet 46630 & Mainnet 4663 + registry warm-up
@@ -410,6 +487,13 @@ export function createZGuardApp(deps: AppDependencies = {}): {
         enabled: config.zkEnabled,
         defaultSystem: config.zkSystem,
         halo2Enabled: config.zkHalo2Enabled,
+        halo2: {
+          workerReady: halo2WorkerReady(config) && Boolean(config.zkWorkerSecret),
+          verifierAddress: config.zkHalo2VerifierAddress,
+          verifierCodehash: getProgramVKey("halo2-kzg"),
+          dispatchConfigured: Boolean(config.zkGhDispatchToken && config.zkGhRepo),
+          prover: "github-actions (.github/workflows/halo2-prover.yml)",
+        },
         scope: "quote",
         verifierAddress: config.zkVerifierAddress,
         sp1ProverConfigured: Boolean(config.zkSp1ProverUrl),
@@ -729,18 +813,17 @@ export function createZGuardApp(deps: AppDependencies = {}): {
         token: body.token,
       });
 
-      let zkAttestation = undefined;
+      let zkAttestation: ZkAttestation | undefined = undefined;
+      let halo2Job: Halo2Job | null = null;
       if (config.zkEnabled && body.options?.enableZk !== false) {
         const sys = body.options?.zkSystem ?? config.zkSystem;
-        zkAttestation = buildInitialZkAttestation({
+        ({ att: zkAttestation, halo2Job } = initialZkAttestation(
+          sys,
           decisionId,
-          system: sys,
-          request: { network, quote: body.quote, payload: body.payload },
-          quoteVerdict: quoteRes.decision,
-          quoteCodes: quoteRes.codes,
-          verifierAddress: config.zkVerifierAddress,
-          programVKeyOverride: config.zkProgramVKey,
-        });
+          { network, quote: body.quote, payload: body.payload },
+          quoteRes.decision,
+          quoteRes.codes
+        ));
       }
 
       const response: GuardResponse = {
@@ -768,20 +851,13 @@ export function createZGuardApp(deps: AppDependencies = {}): {
       });
 
       if (zkAttestation) {
-        await store.upsertZkAttestation(zkAttestation);
-        const zkRpc = getRpcUrlsForChain(
-          config,
+        await settleZkAttestation(
+          zkAttestation,
+          halo2Job,
+          { network, quote: body.quote, payload: body.payload },
+          quoteRes.codes,
           isSupportedRhcChainId(reqChainId) ? reqChainId : config.activeChainId
-        )[0];
-        void proveQuoteAttestationAsync(zkAttestation, {
-          rpcUrl: zkRpc,
-          chainId: isSupportedRhcChainId(reqChainId) ? reqChainId : config.activeChainId,
-          sp1ProverUrl: config.zkSp1ProverUrl ?? undefined,
-          verifierAddress: config.zkVerifierAddress ?? undefined,
-          verifierPrivateKey: config.zkVerifierPrivateKey ?? undefined,
-          guestInput: buildSp1GuestInput({ network, quote: body.quote, payload: body.payload }, quoteRes.codes),
-          onUpdated: (upd) => store.upsertZkAttestation(upd),
-        });
+        );
       }
 
       return c.json(response);
@@ -1199,26 +1275,21 @@ export function createZGuardApp(deps: AppDependencies = {}): {
       const decisionId = `dec_${randomUUID().replace(/-/g, "").slice(0, 20)}`;
       const payloadHash = computePayloadHash(body);
 
-      let zkAttestation = undefined;
+      let zkAttestation: ZkAttestation | undefined = undefined;
+      let halo2Job: Halo2Job | null = null;
       if (
         config.zkEnabled &&
         body.options?.enableZk !== false &&
         checksOut.quote !== undefined
       ) {
         const sys = body.options?.zkSystem ?? config.zkSystem;
-        zkAttestation = buildInitialZkAttestation({
+        ({ att: zkAttestation, halo2Job } = initialZkAttestation(
+          sys,
           decisionId,
-          system: sys,
-          request: {
-            network: body.network,
-            quote: body.quote,
-            payload: body.payload,
-          },
-          quoteVerdict: checksOut.quote.decision,
-          quoteCodes: checksOut.quote.codes,
-          verifierAddress: config.zkVerifierAddress,
-          programVKeyOverride: config.zkProgramVKey,
-        });
+          { network: body.network, quote: body.quote, payload: body.payload },
+          checksOut.quote.decision,
+          checksOut.quote.codes
+        ));
       }
 
       const response: GuardResponse = {
@@ -1246,20 +1317,13 @@ export function createZGuardApp(deps: AppDependencies = {}): {
       });
 
       if (zkAttestation) {
-        await store.upsertZkAttestation(zkAttestation);
-        const zkRpc = getRpcUrlsForChain(config, targetRhcChainId)[0];
-        void proveQuoteAttestationAsync(zkAttestation, {
-          rpcUrl: zkRpc,
-          chainId: targetRhcChainId,
-          sp1ProverUrl: config.zkSp1ProverUrl ?? undefined,
-          verifierAddress: config.zkVerifierAddress ?? undefined,
-          verifierPrivateKey: config.zkVerifierPrivateKey ?? undefined,
-          guestInput: buildSp1GuestInput(
-            { network: body.network, quote: body.quote, payload: body.payload },
-            checksOut.quote?.codes ?? []
-          ),
-          onUpdated: (upd) => store.upsertZkAttestation(upd),
-        });
+        await settleZkAttestation(
+          zkAttestation,
+          halo2Job,
+          { network: body.network, quote: body.quote, payload: body.payload },
+          checksOut.quote?.codes ?? [],
+          targetRhcChainId
+        );
       }
 
       return c.json(response);
@@ -1295,6 +1359,35 @@ export function createZGuardApp(deps: AppDependencies = {}): {
       ...att,
       scope: "quote", // §8.3: strictly always "quote"
     });
+  });
+
+  // --- 10. Halo2 worker endpoints (gap H5/H7): GitHub Actions pulls jobs and posts proofs back ---
+  function workerAuthorized(c: Context): boolean {
+    return Boolean(config.zkWorkerSecret) && safeEqual(c.req.header("x-zguard-worker-key"), config.zkWorkerSecret);
+  }
+
+  app.get("/v1/zk/halo2/jobs", async (c) => {
+    if (!config.zkWorkerSecret) return c.json({ error: "Halo2 worker disabled (ZGUARD_ZK_WORKER_SECRET not set)" }, 404);
+    if (!workerAuthorized(c)) return c.json({ error: "invalid worker key" }, 401);
+    const limit = Math.min(Math.max(Number(c.req.query("limit") ?? 8) || 8, 1), 32);
+    const rows = halo2WorkerReady(config) ? await store.listPendingZkProverJobs("halo2-kzg", limit) : [];
+    const jobs = rows.map((r) => workerJobView(r.decisionId, r.job)).filter((j) => j !== null);
+    return c.json({ chainId: config.activeChainId, verifierAddress: config.zkHalo2VerifierAddress, jobs });
+  });
+
+  app.post("/v1/zk/halo2/results", async (c) => {
+    if (!config.zkWorkerSecret) return c.json({ error: "Halo2 worker disabled (ZGUARD_ZK_WORKER_SECRET not set)" }, 404);
+    if (!workerAuthorized(c)) return c.json({ error: "invalid worker key" }, 401);
+    if (!halo2WorkerReady(config)) return c.json({ error: "Halo2 verifier not configured" }, 503);
+    const body = (await c.req.json().catch(() => null)) as { results?: Halo2ResultInput[] } | null;
+    if (!body || !Array.isArray(body.results) || body.results.length === 0 || body.results.length > 32) {
+      return c.json({ error: "body must be { results: [1..32 items] }" }, 400);
+    }
+    const outcomes = [];
+    for (const r of body.results) {
+      outcomes.push(await processHalo2Result(config, store, getHalo2Runtime(), r));
+    }
+    return c.json({ outcomes });
   });
 
   return { app, config, store, registry, rhcClient };

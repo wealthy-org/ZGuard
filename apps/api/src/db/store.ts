@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { neon } from "@neondatabase/serverless";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/neon-http";
 import type {
   GuardResponse,
@@ -94,6 +94,14 @@ export interface StorageStore {
   ): Promise<{ allowed: boolean; count: number; resetAt: string }>;
   upsertZkAttestation(att: ZkAttestation): Promise<void>;
   getZkAttestation(decisionId: string): Promise<ZkAttestation | null>;
+  /** Attaches (or clears with null) the internal prover input of an attestation (Halo2 worker, gap H7). */
+  setZkProverJob(decisionId: string, job: Record<string, unknown> | null): Promise<void>;
+  getZkProverJob(decisionId: string): Promise<Record<string, unknown> | null>;
+  /** Oldest-first `pending` attestations of `system` that still carry a prover job. */
+  listPendingZkProverJobs(
+    system: ZkAttestation["system"],
+    limit: number
+  ): Promise<Array<{ decisionId: string; job: Record<string, unknown> }>>;
   upsertTokenObservation(chainId: number, address: string, risk: TokenRiskCheckResult): Promise<void>;
   getTokenObservation(
     chainId: number,
@@ -211,6 +219,9 @@ export class NeonPostgresStore implements StorageStore {
       `;
       await this.sqlClient`
         ALTER TABLE zguard_zk_attestations ADD COLUMN IF NOT EXISTS note TEXT
+      `;
+      await this.sqlClient`
+        ALTER TABLE zguard_zk_attestations ADD COLUMN IF NOT EXISTS prover_job JSONB
       `;
       this.initialized = true;
     } catch (err) {
@@ -518,6 +529,7 @@ export class NeonPostgresStore implements StorageStore {
         target: zkAttestationsTable.decisionId,
         set: {
           proof: att.proof,
+          verifierAddress: att.verifierAddress,
           verifyTx: att.verifyTx,
           bn254PrecompileVerified: Boolean(att.bn254PrecompileVerified),
           status: att.status,
@@ -551,6 +563,44 @@ export class NeonPostgresStore implements StorageStore {
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
     };
+  }
+
+  public async setZkProverJob(decisionId: string, job: Record<string, unknown> | null): Promise<void> {
+    await this.ensureSchema();
+    await this.db
+      .update(zkAttestationsTable)
+      .set({ proverJob: job, updatedAt: new Date() })
+      .where(eq(zkAttestationsTable.decisionId, decisionId));
+  }
+
+  public async getZkProverJob(decisionId: string): Promise<Record<string, unknown> | null> {
+    await this.ensureSchema();
+    const rows = await this.db
+      .select({ job: zkAttestationsTable.proverJob })
+      .from(zkAttestationsTable)
+      .where(eq(zkAttestationsTable.decisionId, decisionId))
+      .limit(1);
+    return rows[0]?.job ?? null;
+  }
+
+  public async listPendingZkProverJobs(
+    system: ZkAttestation["system"],
+    limit: number
+  ): Promise<Array<{ decisionId: string; job: Record<string, unknown> }>> {
+    await this.ensureSchema();
+    const rows = await this.db
+      .select({ decisionId: zkAttestationsTable.decisionId, job: zkAttestationsTable.proverJob })
+      .from(zkAttestationsTable)
+      .where(
+        and(
+          eq(zkAttestationsTable.system, system),
+          eq(zkAttestationsTable.status, "pending"),
+          isNotNull(zkAttestationsTable.proverJob)
+        )
+      )
+      .orderBy(asc(zkAttestationsTable.createdAt))
+      .limit(limit);
+    return rows.filter((r) => r.job).map((r) => ({ decisionId: r.decisionId, job: r.job! }));
   }
 
   public async upsertTokenObservation(
@@ -611,6 +661,7 @@ interface PersistedJsonState {
   }>;
   receipts: ReceiptRecord[];
   zkAttestations: Record<string, ZkAttestation>;
+  zkProverJobs?: Record<string, Record<string, unknown>>;
   paymentNonces: Record<string, { createdAt: string; amountMicro: string }>;
   tokenObservations: Record<string, { risk: TokenRiskCheckResult; updatedAt: string }>;
 }
@@ -858,6 +909,30 @@ export class LocalJsonStore implements StorageStore {
 
   public async getZkAttestation(decisionId: string): Promise<ZkAttestation | null> {
     return this.state.zkAttestations[decisionId] ?? null;
+  }
+
+  public async setZkProverJob(decisionId: string, job: Record<string, unknown> | null): Promise<void> {
+    if (!this.state.zkAttestations[decisionId]) return;
+    const jobs = (this.state.zkProverJobs ??= {});
+    if (job) jobs[decisionId] = job;
+    else delete jobs[decisionId];
+    this.flush();
+  }
+
+  public async getZkProverJob(decisionId: string): Promise<Record<string, unknown> | null> {
+    return this.state.zkProverJobs?.[decisionId] ?? null;
+  }
+
+  public async listPendingZkProverJobs(
+    system: ZkAttestation["system"],
+    limit: number
+  ): Promise<Array<{ decisionId: string; job: Record<string, unknown> }>> {
+    return Object.entries(this.state.zkProverJobs ?? {})
+      .map(([decisionId, job]) => ({ decisionId, job, att: this.state.zkAttestations[decisionId] }))
+      .filter((x) => x.att && x.att.system === system && x.att.status === "pending")
+      .sort((a, b) => (a.att?.createdAt ?? "").localeCompare(b.att?.createdAt ?? ""))
+      .slice(0, limit)
+      .map(({ decisionId, job }) => ({ decisionId, job }));
   }
 
   public async upsertTokenObservation(
