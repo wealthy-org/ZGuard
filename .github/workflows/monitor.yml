@@ -30,6 +30,9 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
+          # v5 auto-enables the pnpm cache because package.json has "packageManager"; this job never installs
+          # pnpm (plain node scripts), so that auto-cache failed every run with "Unable to locate executable: pnpm".
+          package-manager-cache: false
       - name: Unit tests for the monitor
         run: node --test scripts/monitor.test.mjs
       - name: Check production
