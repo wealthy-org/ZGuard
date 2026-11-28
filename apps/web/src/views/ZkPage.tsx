@@ -142,7 +142,7 @@ export function ZkPage() {
       <PageHeader
         kicker={`ZK layer · attestation.zk · RHC ${chainId}`}
         lines={['Prove the match.', { text: 'Only when a real proof exists.', muted: true }]}
-        desc="Quote-match is a pure function, so it can be proven. This page shows the live attestation status from the API. Until the SP1 prover and verifier are deployed, attestations stay pending: nothing here is labelled proven without a proof the onchain verifier accepted."
+        desc="Quote-match is a pure function, so it can be proven. This page shows the live attestation status from the API. The Halo2-KZG verifier is live on testnet 46630 with two fixture proofs recorded onchain; SP1 still has no proof. Attestations stay pending until this API runs a prover: nothing here is labelled proven without a proof the onchain verifier accepted."
         aside={<OrbitIllo size={260} />}
       />
 
@@ -153,16 +153,16 @@ export function ZkPage() {
               {
                 icon: Cpu,
                 name: 'Groth16 · SP1',
-                badge: 'Scaffold · prover not deployed',
+                badge: 'Built in CI · no proof yet',
                 tone: 'border-amber-400/50 text-amber-200',
-                desc: 'Rule engine in Rust (packages/zk/quote-rules, unit-tested; byte-identical public values with the TypeScript SDK). The SP1 guest still has to be built with `cargo prove build` and served by a prover.',
+                desc: 'Rule engine in Rust (packages/zk/quote-rules, unit-tested; byte-identical public values with the TypeScript SDK). The SP1 guest is built in CI and its programVKey is pinned. A Groth16 proof needs the paid SP1 prover network, so no proof exists and no SP1 verifier is deployed.',
               },
               {
                 icon: CircuitBoard,
                 name: 'Halo2 · KZG',
-                badge: 'Circuit + verifier · not deployed',
-                tone: 'border-amber-400/50 text-amber-200',
-                desc: 'PSE Halo2-KZG circuit for the eip3009 rail (packages/zk/halo2-quote-circuit): the canonical quote/tx JSON bytes are public inputs, the circuit proves Q-001 and Q-002 and returns the same public values as SP1. Prover CLI, generated Solidity verifier and Foundry tests with real proofs run in CI. Not deployed and not offered by the API yet.',
+                badge: 'Verifier live · testnet 46630',
+                tone: 'border-emerald-400/50 text-emerald-200',
+                desc: 'PSE Halo2-KZG circuit for the eip3009 rail (packages/zk/halo2-quote-circuit): the canonical quote/tx JSON bytes are public inputs, the circuit proves Q-001 and Q-002 and returns the same public values as SP1. The generated Solidity verifier is deployed on testnet 46630, and the allow and deny Q-001 fixture proofs were verified and recorded onchain. The API proves new eip3009 quotes on GitHub Actions and accepts a proof only through that verifier, once the operator enables it. Testnet only; the verifier generator is unaudited.',
               },
             ].map((s) => {
               const Icon = s.icon;
@@ -197,6 +197,21 @@ export function ZkPage() {
                   <span className="font-mono text-zinc-200">
                     {verifierAddress === undefined ? 'checking…' : verifierAddress ? verifierAddress : 'not deployed / not configured'}
                   </span>
+                </li>
+                <li>
+                  · Halo2 verifier on 46630:{' '}
+                  <a href="https://explorer.testnet.chain.robinhood.com/address/0x619e9da004686fde3970a6c6e059291e9934e752" target="_blank" rel="noreferrer" className="font-mono text-zinc-200 underline decoration-white/20 underline-offset-2 hover:text-white">
+                    0x619e…e752
+                  </a>
+                  , proofs recorded:{' '}
+                  <a href="https://explorer.testnet.chain.robinhood.com/tx/0x838322fecf65bec47aa4f9f4f088544d1230d59c3d670e7c0bfb7c9653ef0a24" target="_blank" rel="noreferrer" className="font-mono text-zinc-200 underline decoration-white/20 underline-offset-2 hover:text-white">
+                    allow
+                  </a>
+                  {' · '}
+                  <a href="https://explorer.testnet.chain.robinhood.com/tx/0x61d1387f1114fdaac8f7f0391fa8708c2158f20e0b970fa9372a8a55063486b9" target="_blank" rel="noreferrer" className="font-mono text-zinc-200 underline decoration-white/20 underline-offset-2 hover:text-white">
+                    deny Q-001
+                  </a>
+                  .
                 </li>
                 <li>· Testnet 46630 only until audit + multisig owner (no mainnet claims).</li>
               </ul>

@@ -82,7 +82,7 @@ const CONFIG: [string, string, string][] = [
   ['EIP-712 domains', 'only those read from installed contracts (USDG verified on 4663)', 'required'],
   ['Stock Token list', 'official Robinhood registry, refreshed live, never ticker-based', 'required'],
   ['Simulation method', 'eth_simulateV1 active on RHC 4663 (+ debug_traceCall fallback)', 'verified'],
-  ['zk system', 'Groth16 BN254 via SP1 (guest scaffold, prover + verifier not deployed; attestations stay pending) · Halo2-KZG circuit + verifier (CI, not deployed)', 'in progress'],
+  ['zk system', 'Groth16 BN254 via SP1 (guest built in CI, no proof, verifier not deployed) · Halo2-KZG verifier deployed on testnet 46630 with allow + deny Q-001 proofs recorded; API attestations pending until the prover is enabled', 'in progress'],
 ];
 
 function X402Flow() {

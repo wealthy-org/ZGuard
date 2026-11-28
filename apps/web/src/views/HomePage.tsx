@@ -537,11 +537,11 @@ function ZkTeaser({ navigate }: { navigate: Navigate }) {
           <LineReveal lines={['Prove the match.', { text: 'Keep the intent private.', muted: true }]} className="font-display text-[clamp(1.875rem,9.5vw,2.25rem)] leading-[0.95] text-white sm:text-5xl lg:text-6xl" />
           <Reveal delay={0.2}>
             <p className="mt-6 max-w-md text-sm leading-relaxed text-zinc-400">
-              Groth16 via SP1 is the planned proof system (guest scaffold today; attestations stay pending until a prover and verifier are deployed). The proof covers quote-match only,
+              Groth16 via SP1 is the planned proof system (guest built in CI, no proof yet). A Halo2-KZG verifier is live on testnet 46630 with an allow and a deny proof recorded; API attestations stay pending until the prover is enabled. The proof covers quote-match only,
               never simulation or token risk, and carries commitments instead of your intent.
             </p>
             <div className="mt-6 flex flex-wrap gap-2">
-              {['scope: "quote"', 'Groth16 · BN254', 'Halo2-KZG · verifier generated', 'commitment hashes'].map((t) => (
+              {['scope: "quote"', 'Groth16 · BN254', 'Halo2-KZG · verifier on 46630', 'commitment hashes'].map((t) => (
                 <span key={t} className="rounded-full border border-white/15 px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider text-zinc-300">
                   {t}
                 </span>
