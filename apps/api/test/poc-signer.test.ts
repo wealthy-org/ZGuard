@@ -16,6 +16,7 @@ import {
   computePayloadHash,
   createPermRouterGuard,
   guardEvmSigner,
+  verifyReceiptForSigning,
   type GuardRequest,
   type GuardResponse,
 } from "@zguard/sdk";
@@ -244,5 +245,59 @@ describe("[SIG-5] integrations", () => {
     const out = await perm.guardAndSignRoute({ intent, tx: baseTx as never, tokenAddress: USDG, signer });
     assert.equal(out.txHashOrSig, "0xsigned");
     assert.deepEqual(seen.map((s) => s.method), ["signTransaction"]);
+  });
+});
+
+describe("[SIG-6] receipt network and abstain override are bounded (gap signer c/d)", () => {
+  const req = { network: "eip155:46630", payload: { type: "intent" as const, intent } };
+  const receiptFor = (over: Partial<GuardResponse>): GuardResponse =>
+    ({
+      decisionId: "d",
+      decision: "allow",
+      reason: "ok",
+      codes: [],
+      payload_hash: computePayloadHash(req),
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+      network: "eip155:46630",
+      checks: {},
+      flags: [],
+      charged: null,
+      ...over,
+    }) as GuardResponse;
+
+  it("(c) refuses a receipt whose network differs from the signing network", () => {
+    assert.throws(
+      () => verifyReceiptForSigning(req, receiptFor({ network: "eip155:4663" })),
+      (e: unknown) => e instanceof GuardBlockedError && /receipt is for eip155:4663/.test(e.message)
+    );
+    assert.deepEqual(verifyReceiptForSigning(req, receiptFor({})), { allowed: true, abstainOverrideUsed: false });
+  });
+
+  it("(d) a stored abstain receipt without expiry cannot be replayed with the override", () => {
+    const abstain = receiptFor({ decision: "abstain", expires_at: null });
+    assert.throws(
+      () => verifyReceiptForSigning(req, abstain, { allowAbstainOverride: true }),
+      (e: unknown) => e instanceof GuardBlockedError && /fresh verdict/.test(e.message)
+    );
+    assert.equal(verifyReceiptForSigning(req, abstain, { allowAbstainOverride: true, freshlyEvaluated: true }).abstainOverrideUsed, true);
+    const expired = receiptFor({ decision: "abstain", expires_at: new Date(Date.now() - 1000).toISOString() });
+    assert.throws(() => verifyReceiptForSigning(req, expired, { allowAbstainOverride: true, freshlyEvaluated: true }), /expired verdict/);
+  });
+
+  it("(d) guardEvmSigner: override works on a fresh evaluate(), not on a supplied stored receipt", async () => {
+    const abstainEval = (r: GuardRequest) =>
+      receiptFor({ decision: "abstain", expires_at: null, payload_hash: computePayloadHash(r) });
+    const fresh = spySigner();
+    const g1 = guardEvmSigner(fresh.signer, { evaluate: abstainEval, allowAbstainOverride: true, contextIntent: intent });
+    await g1.sendTransaction(baseTx);
+    assert.equal(fresh.seen.length, 1);
+
+    const stored = spySigner();
+    const g2 = guardEvmSigner(stored.signer, { allowAbstainOverride: true, contextIntent: intent });
+    const probe = guardEvmSigner(spySigner().signer, { evaluate: (r) => { captured = r; return abstainEval(r); }, allowAbstainOverride: true, contextIntent: intent });
+    let captured: GuardRequest | undefined;
+    await probe.sendTransaction(baseTx);
+    await assert.rejects(g2.sendTransaction(baseTx, { receipt: abstainEval(captured!) }), /fresh verdict/);
+    assert.equal(stored.seen.length, 0);
   });
 });

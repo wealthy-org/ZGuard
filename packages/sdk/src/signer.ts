@@ -204,7 +204,12 @@ export interface GuardSigningContext {
 export function verifyReceiptForSigning(
   candidate: Pick<GuardRequest, "network" | "quote" | "payload" | "token">,
   receipt: GuardResponse | undefined,
-  options?: { allowAbstainOverride?: boolean; nowMs?: number }
+  options?: {
+    allowAbstainOverride?: boolean;
+    nowMs?: number;
+    /** True only when the receipt was produced by evaluate() inside this signing call (not a stored one). */
+    freshlyEvaluated?: boolean;
+  }
 ): { allowed: true; abstainOverrideUsed: boolean } {
   const expectedHash = computePayloadHash(candidate);
 
@@ -235,6 +240,17 @@ export function verifyReceiptForSigning(
     );
   }
 
+  // [signer c] the receipt must be about the same network (payload_hash binds it too; this catches forged receipts
+  // that copy the hash but not the network, and gives a clear reason).
+  if (receipt.network && candidate.network && receipt.network.toLowerCase() !== candidate.network.toLowerCase()) {
+    throw new GuardBlockedError(
+      `Refusing to sign: receipt is for ${receipt.network}, signing on ${candidate.network}`,
+      "deny",
+      ["Q-004"],
+      expectedHash
+    );
+  }
+
   if (receipt.decision === "deny") {
     throw new GuardBlockedError(
       `Refusing to sign: ZGuard denied payload (${receipt.reason})`,
@@ -246,6 +262,26 @@ export function verifyReceiptForSigning(
 
   if (receipt.decision === "abstain") {
     if (options?.allowAbstainOverride === true) {
+      // [signer d] an override is never open-ended: it needs an unexpired expires_at, or a verdict evaluated
+      // inside this very signing call. A stored abstain receipt without expiry cannot be replayed later.
+      if (receipt.expires_at) {
+        const exp = Date.parse(receipt.expires_at);
+        if (!Number.isFinite(exp) || (options.nowMs ?? Date.now()) >= exp) {
+          throw new GuardBlockedError(
+            `Refusing to sign: abstain override on an expired verdict (${receipt.expires_at})`,
+            "abstain",
+            receipt.codes,
+            expectedHash
+          );
+        }
+      } else if (options.freshlyEvaluated !== true) {
+        throw new GuardBlockedError(
+          "Refusing to sign: abstain override needs a fresh verdict (stored abstain receipt has no expires_at)",
+          "abstain",
+          receipt.codes,
+          expectedHash
+        );
+      }
       return { allowed: true, abstainOverrideUsed: true };
     }
     throw new GuardBlockedError(
@@ -328,6 +364,7 @@ export function guardEvmSigner<T extends EvmSignerLike>(signer: T, config: Guard
     };
 
     let receipt = ctx?.receipt;
+    const freshlyEvaluated = !receipt;
     if (!receipt) {
       if (!evalFn) {
         throw new GuardBlockedError(
@@ -342,6 +379,7 @@ export function guardEvmSigner<T extends EvmSignerLike>(signer: T, config: Guard
 
     const check = verifyReceiptForSigning(req, receipt, {
       allowAbstainOverride: config.allowAbstainOverride,
+      freshlyEvaluated,
     });
 
     if (check.abstainOverrideUsed) {
