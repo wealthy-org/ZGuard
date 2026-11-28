@@ -4,7 +4,7 @@ import { AlertTriangle, CheckCircle2, Circle, CircuitBoard, Cpu, Fingerprint, Lo
 import { PageHeader } from '../components/PageHeader';
 import { EASE, Reveal } from '../components/Reveal';
 import { OrbitIllo } from '../components/Illustrations';
-import { fetchRuntimeConfig, pollZkAttestation, postLiveVerify } from '../lib/zguard-api';
+import { fetchRuntimeConfig, pollZkAttestation, postLiveVerify, type RuntimeConfigSummary } from '../lib/zguard-api';
 import { selectChain, useWallet, type RhcChainId } from '../lib/wallet';
 
 /**
@@ -54,13 +54,24 @@ export function ZkPage() {
   const [error, setError] = useState<string | null>(null);
   const [verdict, setVerdict] = useState<Record<string, unknown> | null>(null);
   const [att, setAtt] = useState<Record<string, unknown> | null>(null);
-  const [verifierAddress, setVerifierAddress] = useState<string | null | undefined>(undefined);
+  const [zkCfg, setZkCfg] = useState<RuntimeConfigSummary['zk'] | null | undefined>(undefined);
+  const [apiChainId, setApiChainId] = useState<number | null>(null);
+  const [decisionId, setDecisionId] = useState<string | null>(null);
+  const [rechecking, setRechecking] = useState(false);
 
   useEffect(() => {
     fetchRuntimeConfig()
-      .then((cfg) => setVerifierAddress(cfg?.zk?.verifierAddress ?? null))
-      .catch(() => setVerifierAddress(null));
+      .then((cfg) => {
+        setZkCfg(cfg?.zk ?? null);
+        setApiChainId(cfg?.chainId ?? null);
+      })
+      .catch(() => setZkCfg(null));
   }, []);
+
+  // The API proves with Halo2 only when it is the default system and the worker is ready (verifier + secret).
+  const halo2 = zkCfg?.defaultSystem === 'halo2-kzg' && zkCfg?.halo2?.workerReady === true;
+  const verifierAddress: string | null | undefined =
+    zkCfg === undefined ? undefined : (halo2 ? zkCfg?.halo2?.verifierAddress : zkCfg?.verifierAddress) ?? null;
 
   const reset = (f: Fixture, next?: RhcChainId) => {
     if (next && next !== chainId) void selectChain(next);
@@ -69,6 +80,19 @@ export function ZkPage() {
     setError(null);
     setVerdict(null);
     setAtt(null);
+    setDecisionId(null);
+  };
+
+  // Halo2 proofs arrive asynchronously (GitHub Actions); re-read the attestation without a new paid call.
+  const recheck = async () => {
+    if (!decisionId || rechecking) return;
+    setRechecking(true);
+    try {
+      const fresh = await pollZkAttestation(decisionId, 1);
+      if (fresh) setAtt(fresh);
+    } finally {
+      setRechecking(false);
+    }
   };
 
   const run = async () => {
@@ -77,6 +101,7 @@ export function ZkPage() {
     setError(null);
     setVerdict(null);
     setAtt(null);
+    setDecisionId(null);
     try {
       const { status, data } = await postLiveVerify({
         network: `eip155:${chainId}`,
@@ -93,13 +118,14 @@ export function ZkPage() {
             domain: { name: 'Global Dollar', version: '1', chainId, verifyingContract: USDG[chainId] },
           },
         },
-        options: { enableZk: true, zkSystem: 'groth16-sp1' },
+        options: { enableZk: true, zkSystem: halo2 ? 'halo2-kzg' : 'groth16-sp1' },
       });
       if (status >= 400) throw new Error(`POST /v1/verify returned ${status}${data.reason ? `: ${String(data.reason)}` : ''}`);
       setVerdict(data);
-      const decisionId = String(data.decisionId ?? '');
-      if (decisionId) {
-        const settled = await pollZkAttestation(decisionId);
+      const id = String(data.decisionId ?? '');
+      if (id) {
+        setDecisionId(id);
+        const settled = await pollZkAttestation(id);
         setAtt(settled);
       }
     } catch (err) {
@@ -114,7 +140,52 @@ export function ZkPage() {
   const pub = (att?.publicInputs as Record<string, unknown> | undefined) ?? null;
   const proverMissing = Boolean(note && /prover not configured/i.test(note));
 
-  const steps: { label: string; state: StepState; detail: string }[] = [
+  const isHalo2 = att ? att.system === 'halo2-kzg' : halo2;
+  const halo2Queued = Boolean(status === 'pending' && note && /queued/i.test(note));
+  const verifierChain = apiChainId ?? chainId;
+
+  const halo2Steps: { label: string; state: StepState; detail: string }[] = [
+    {
+      label: 'Quote verdict + commitments (keccak of canonical quote / tx JSON)',
+      state: verdict ? 'done' : phase === 'running' ? 'running' : error ? 'failed' : 'wait',
+      detail: verdict ? `decision=${String(verdict.decision)} · decisionId=${String(verdict.decisionId ?? '—')}` : '',
+    },
+    {
+      label: 'Halo2 job → GitHub Actions prover (halo2-prover.yml) returns a KZG proof',
+      state: att?.proof
+        ? 'done'
+        : status === 'failed'
+          ? 'failed'
+          : halo2Queued
+            ? 'running'
+            : att
+              ? 'missing'
+              : phase === 'running' && verdict
+                ? 'running'
+                : 'wait',
+      detail: att?.proof
+        ? `proof ${shortHex(att.proof)}`
+        : halo2Queued
+          ? `${zkCfg?.halo2?.dispatchConfigured ? 'dispatched; usually a few minutes' : 'picked up by the scheduled worker'} · press re-check`
+          : '',
+    },
+    {
+      label: `ZGuardHalo2QuoteVerifier.verifyQuote on RHC ${verifierChain} (eth_call, BN254 pairing)`,
+      state: status === 'proven' || status === 'verified' ? 'done' : status === 'failed' && att?.proof ? 'failed' : 'wait',
+      detail: verifierAddress ? `verifier ${shortHex(verifierAddress)}` : verifierAddress === null ? 'no verifier address configured' : '',
+    },
+    {
+      label: 'verifyAndRecord recorded onchain (verifyTx)',
+      state: status === 'verified' ? 'done' : status === 'proven' && !zkCfg?.onchainBroadcastEnabled ? 'missing' : 'wait',
+      detail: att?.verifyTx
+        ? `tx ${shortHex(att.verifyTx)}`
+        : status === 'proven' && !zkCfg?.onchainBroadcastEnabled
+          ? 'no recording key on this deployment; status stays proven'
+          : '',
+    },
+  ];
+
+  const sp1Steps: { label: string; state: StepState; detail: string }[] = [
     {
       label: 'Quote verdict + commitments (keccak of canonical quote / tx JSON)',
       state: verdict ? 'done' : phase === 'running' ? 'running' : error ? 'failed' : 'wait',
@@ -136,6 +207,7 @@ export function ZkPage() {
       detail: att?.verifyTx ? `tx ${shortHex(att.verifyTx)}` : '',
     },
   ];
+  const steps = isHalo2 ? halo2Steps : sp1Steps;
 
   return (
     <div className="relative">
@@ -336,6 +408,16 @@ export function ZkPage() {
                 'Request verdict + attestation'
               )}
             </button>
+            {phase === 'done' && decisionId && status === 'pending' && isHalo2 && (
+              <button
+                type="button"
+                onClick={recheck}
+                disabled={rechecking}
+                className="flex h-10 items-center justify-center gap-2 rounded-2xl border border-white/15 font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-300 transition-all hover:text-white"
+              >
+                {rechecking ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Re-check attestation (free)
+              </button>
+            )}
           </div>
         </div>
       </section>

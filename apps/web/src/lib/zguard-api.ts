@@ -15,6 +15,13 @@ export interface RuntimeConfigSummary {
   zk?: {
     verifierAddress: string | null;
     onchainBroadcastEnabled: boolean;
+    defaultSystem?: string;
+    /** Halo2 attestation path (GitHub Actions prover + ZGuardHalo2QuoteVerifier). */
+    halo2?: {
+      workerReady: boolean;
+      verifierAddress: string | null;
+      dispatchConfigured: boolean;
+    } | null;
   };
   sequencer?: {
     status: "up" | "down" | "grace_period";
