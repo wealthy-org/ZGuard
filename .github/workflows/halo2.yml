@@ -4,17 +4,24 @@ name: Halo2 quote circuit
 #  1. native tests: MockProver parity with zguard-quote-rules on the shared fixtures + a real KZG proof
 #     with the pinned PPoT-derived SRS;
 #  2. the committed Solidity verifier must be exactly what the circuit generates (no hand edits, no drift);
-#  3. fresh proofs for every covered fixture, then Foundry verifies them on the EVM through the wrapper.
+#  3. fresh proofs for every covered fixture, then Foundry verifies them on the EVM through the wrapper;
+#  4. API worker end-to-end on anvil: /v1/verify queues jobs → real prover CLI → callback → eth_call →
+#     verifyAndRecord → `verified` (apps/api/test/halo2-worker.test.ts), and the committed TS artifact
+#     (halo2-artifact.ts) must equal what solc generates.
 
 on:
   push:
     branches: [main]
     paths:
       - "packages/zk/**"
+      - "apps/api/src/services/halo2-worker.ts"
+      - "apps/api/test/halo2-worker.test.ts"
       - ".github/workflows/halo2.yml"
   pull_request:
     paths:
       - "packages/zk/**"
+      - "apps/api/src/services/halo2-worker.ts"
+      - "apps/api/test/halo2-worker.test.ts"
       - ".github/workflows/halo2.yml"
   workflow_dispatch:
 
@@ -48,7 +55,7 @@ jobs:
           version: stable
 
       - name: Fetch pinned SRS (sha256-checked)
-        run: packages/zk/scripts/fetch-halo2-srs.sh
+        run: bash packages/zk/scripts/fetch-halo2-srs.sh
 
       - name: cargo test (MockProver parity + real KZG proof)
         working-directory: packages/zk/halo2-quote-circuit
@@ -70,3 +77,26 @@ jobs:
           cargo run --locked --release --bin zguard-halo2 -- prove-fixtures ../fixtures/sp1-quote-fixtures.json ../fixtures/halo2-quote-proofs.json
           cd ../foundry
           forge test -vv --match-contract Halo2
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Build sdk + zk; committed halo2-artifact.ts == generated
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @zguard/sdk build
+          pnpm --filter @zguard/zk build
+          git diff --exit-code packages/zk/src/halo2-artifact.ts packages/zk/src/verifier-artifact.ts
+
+      - name: API ↔ prover ↔ EVM end-to-end (anvil)
+        run: |
+          anvil --silent &
+          sleep 3
+          cd apps/api
+          ZGUARD_TEST_ANVIL_RPC=http://127.0.0.1:8545 \
+          ZGUARD_TEST_HALO2_BIN="$GITHUB_WORKSPACE/packages/zk/halo2-quote-circuit/target/release/zguard-halo2" \
+            ../../node_modules/.bin/tsx --test test/halo2-worker.test.ts

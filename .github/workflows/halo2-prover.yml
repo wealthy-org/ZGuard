@@ -1,0 +1,97 @@
+name: Halo2 prover (API worker)
+
+# Gap H5/H7: free prover for halo2-kzg attestations.
+#   API (/v1/verify, /v1/guard) queues a job and sends repository_dispatch "halo2-prove"
+#   → this workflow pulls pending jobs, proves them with `zguard-halo2 prove-jobs`, posts each proof back.
+#   The API accepts a proof only if ZGuardHalo2QuoteVerifier.verifyQuote (eth_call) returns its own committed
+#   public values; the worker is not trusted.
+#
+# Secrets (Settings → Secrets and variables → Actions):
+#   ZGUARD_ZK_WORKER_SECRET  same value as the API env var (required; without it the workflow is a no-op)
+#   ZGUARD_API_URL           optional, defaults to https://zguard-delta.vercel.app (the web proxies /v1/*)
+
+on:
+  repository_dispatch:
+    types: [halo2-prove]
+  workflow_dispatch:
+  schedule:
+    # Safety net for missed dispatches (no-op when the queue is empty).
+    - cron: "17 */6 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: halo2-prover
+  cancel-in-progress: false
+
+jobs:
+  prove:
+    name: Prove queued Halo2 jobs
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      WORKER_KEY: ${{ secrets.ZGUARD_ZK_WORKER_SECRET }}
+      API_URL: ${{ secrets.ZGUARD_API_URL || 'https://zguard-delta.vercel.app' }}
+      CARGO_TERM_COLOR: always
+    steps:
+      - name: Fetch pending jobs
+        id: jobs
+        run: |
+          if [ -z "$WORKER_KEY" ]; then
+            echo "::notice::ZGUARD_ZK_WORKER_SECRET is not set; nothing to do"
+            echo "count=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          code=$(curl -sS -o "$RUNNER_TEMP/jobs-response.json" -w '%{http_code}' \
+            -H "x-zguard-worker-key: $WORKER_KEY" "$API_URL/v1/zk/halo2/jobs?limit=16")
+          if [ "$code" != "200" ]; then
+            echo "::error::GET /v1/zk/halo2/jobs returned HTTP $code"
+            cat "$RUNNER_TEMP/jobs-response.json"; exit 1
+          fi
+          jq '.jobs' "$RUNNER_TEMP/jobs-response.json" > "$RUNNER_TEMP/jobs.json"
+          count=$(jq 'length' "$RUNNER_TEMP/jobs.json")
+          echo "verifier: $(jq -r '.verifierAddress' "$RUNNER_TEMP/jobs-response.json") on chain $(jq -r '.chainId' "$RUNNER_TEMP/jobs-response.json")"
+          echo "pending jobs: $count"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v5
+        if: steps.jobs.outputs.count != '0'
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.jobs.outputs.count != '0'
+
+      - uses: Swatinem/rust-cache@v2
+        if: steps.jobs.outputs.count != '0'
+        with:
+          workspaces: packages/zk/halo2-quote-circuit
+
+      - name: Fetch pinned SRS (sha256-checked)
+        if: steps.jobs.outputs.count != '0'
+        run: bash packages/zk/scripts/fetch-halo2-srs.sh
+
+      - name: Prove
+        if: steps.jobs.outputs.count != '0'
+        working-directory: packages/zk/halo2-quote-circuit
+        run: |
+          cargo build --locked --release --bin zguard-halo2
+          ./target/release/zguard-halo2 prove-jobs "$RUNNER_TEMP/jobs.json" "$RUNNER_TEMP/results.json"
+
+      - name: Post proofs to the API (one request per job)
+        if: steps.jobs.outputs.count != '0'
+        run: |
+          echo "| decisionId | status | note |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          bad=0
+          for i in $(seq 0 $(( $(jq 'length' "$RUNNER_TEMP/results.json") - 1 ))); do
+            jq -c "{results: [.[$i]]}" "$RUNNER_TEMP/results.json" > "$RUNNER_TEMP/one.json"
+            code=$(curl -sS -o "$RUNNER_TEMP/out.json" -w '%{http_code}' -X POST \
+              -H "x-zguard-worker-key: $WORKER_KEY" -H "Content-Type: application/json" \
+              --data @"$RUNNER_TEMP/one.json" "$API_URL/v1/zk/halo2/results")
+            if [ "$code" != "200" ]; then
+              echo "::warning::POST results HTTP $code: $(cat "$RUNNER_TEMP/out.json")"; bad=1; continue
+            fi
+            jq -r '.outcomes[] | "| \(.decisionId) | \(.status) | \(.note) |"' "$RUNNER_TEMP/out.json" | tee -a "$GITHUB_STEP_SUMMARY"
+            if jq -e '.outcomes[] | select(.status == "failed")' "$RUNNER_TEMP/out.json" > /dev/null; then bad=1; fi
+          done
+          exit $bad
