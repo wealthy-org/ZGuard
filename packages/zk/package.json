@@ -1,7 +1,7 @@
 {
   "name": "@zguard/zk",
   "version": "0.1.0",
-  "description": "ZGuard quote attestation layer: SP1 Groth16 verifier contract + async prover client (SP1 guest built in CI; Halo2-KZG circuit + generated verifier, not deployed)",
+  "description": "ZGuard quote attestation layer: SP1 Groth16 verifier + async prover client, and the Halo2-KZG circuit path (generated verifier, GitHub Actions worker, testnet deploy script)",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -17,7 +17,10 @@
     "build": "node scripts/compile-solidity.mjs && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "deploy": "tsx src/deploy-verifier.ts",
-    "fixtures:sp1": "node scripts/gen-sp1-fixtures.mjs"
+    "fixtures:sp1": "node scripts/gen-sp1-fixtures.mjs",
+    "deploy:halo2": "tsx src/deploy-halo2-verifier.ts deploy",
+    "record:halo2": "tsx src/deploy-halo2-verifier.ts record",
+    "check:halo2": "tsx src/deploy-halo2-verifier.ts check"
   },
   "dependencies": {
     "@zguard/sdk": "workspace:*",

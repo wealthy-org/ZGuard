@@ -1,5 +1,6 @@
 //! zguard-halo2 verifier <out.sol>
 //! zguard-halo2 prove-fixtures <sp1-quote-fixtures.json> <out.json>
+//! zguard-halo2 prove-jobs <jobs.json> <out.json>     (API worker: [{decisionId, quoteJson, txJson, hints, verdict, mask}])
 //!
 //! Both commands load the pinned SRS (`$ZGUARD_HALO2_SRS` or `srs/kzg_bn254_13.srs`).
 
@@ -92,8 +93,47 @@ fn main() {
             std::fs::write(&args[3], serde_json::to_string_pretty(&doc).unwrap() + "\n").expect("write proofs");
             eprintln!("wrote {}", args[3]);
         }
+        ("prove-jobs", 4) => {
+            let jobs: Vec<Value> = serde_json::from_str(&std::fs::read_to_string(&args[2]).expect("read jobs")).expect("jobs json");
+            let mut out = Vec::new();
+            for j in &jobs {
+                let id = j["decisionId"].as_str().unwrap_or("").to_string();
+                let result = (|| -> Result<String, String> {
+                    let q = j["quoteJson"].as_str().ok_or("quoteJson missing")?.as_bytes();
+                    let tx = j["txJson"].as_str().ok_or("txJson missing")?.as_bytes();
+                    let hints = hints_of(j);
+                    let reference = evaluate(q, tx, hints);
+                    let want = (j["verdict"].as_u64().ok_or("verdict missing")? as u8, j["mask"].as_u64().ok_or("mask missing")? as u32);
+                    if (reference.verdict, reference.rule_bitmask) != want {
+                        return Err(format!("quote-rules gives {:?}, job claims {want:?}", (reference.verdict, reference.rule_bitmask)));
+                    }
+                    let circuit = QuoteCircuit::new(q, tx, hints).map_err(|e| format!("outside circuit coverage: {e:?}"))?;
+                    let o = circuit.outcome();
+                    if (o.verdict, o.mask) != want {
+                        return Err(format!("circuit gives {:?}, job claims {want:?}", (o.verdict, o.mask)));
+                    }
+                    let instances = circuit.instances();
+                    let proof = prove(&params, &pk, circuit);
+                    if !verify(&params, pk.get_vk(), &proof, &instances) {
+                        return Err("native verify failed".into());
+                    }
+                    Ok(format!("0x{}", hex::encode(&proof)))
+                })();
+                match result {
+                    Ok(proof) => {
+                        eprintln!("{id}: proof {} bytes", proof.len() / 2 - 1);
+                        out.push(json!({ "decisionId": id, "proof": proof }));
+                    }
+                    Err(e) => {
+                        eprintln!("{id}: {e}");
+                        out.push(json!({ "decisionId": id, "error": e }));
+                    }
+                }
+            }
+            std::fs::write(&args[3], serde_json::to_string_pretty(&out).unwrap() + "\n").expect("write results");
+        }
         _ => {
-            eprintln!("usage: zguard-halo2 verifier <out.sol> | prove-fixtures <fixtures.json> <out.json>");
+            eprintln!("usage: zguard-halo2 verifier <out.sol> | prove-fixtures <fixtures.json> <out.json> | prove-jobs <jobs.json> <out.json>");
             std::process::exit(1);
         }
     }

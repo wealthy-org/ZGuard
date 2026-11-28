@@ -26,6 +26,7 @@ import {
   ZGUARD_VERIFIER_BYTECODE,
   ZGUARD_VERIFIER_DEPLOYED_BYTECODE,
 } from "./verifier-artifact.js";
+import { HALO2_VERIFIER_CODEHASH } from "./halo2-artifact.js";
 
 export {
   ZGUARD_VERIFIER_ABI,
@@ -70,7 +71,7 @@ export const SP1_QUOTE_GUEST_BUILD = {
   elfSha256: "6c337940e245b96748d8f678427965870add1e0b24844d6d11f756f2b56b6957",
 } as const;
 
-/** Systems without a built program (halo2-kzg, groth16-risc0) keep a labelled placeholder. */
+/** halo2-kzg uses the codehash of its generated verifier (VK embedded); groth16-risc0 keeps a labelled placeholder. */
 export const PLACEHOLDER_PROGRAM_VKEY_NOTE =
   "placeholder vkey = keccak256('zguard:quote-verifier:v1:<system>'); not a real program vkey";
 
@@ -79,6 +80,7 @@ export function getProgramVKey(system: ZkSystemId, programVKeyOverride?: string 
     return programVKeyOverride.toLowerCase() as `0x${string}`;
   }
   if (system === "groth16-sp1") return SP1_QUOTE_PROGRAM_VKEY;
+  if (system === "halo2-kzg") return HALO2_VERIFIER_CODEHASH;
   return keccak256(toHex(`zguard:quote-verifier:v1:${system}`));
 }
 
@@ -224,7 +226,10 @@ export async function proveQuoteAttestationAsync(
       scope: "quote",
       status: "pending",
       bn254PrecompileVerified: false,
-      note: `${initial.system} is a skeleton (no prover/verifier); nothing is claimed proven`,
+      note:
+        initial.system === "halo2-kzg"
+          ? "halo2-kzg attestations are proven by the Halo2 worker only when ZGUARD_ZK_HALO2_ENABLED=true; nothing is claimed proven"
+          : `${initial.system} has no prover/verifier; nothing is claimed proven`,
       updatedAt: now(),
     });
   }
@@ -346,4 +351,5 @@ export async function proveQuoteAttestationAsync(
   });
 }
 
+export * from "./halo2.js";
 export { buildSp1QuoteFixtures, SP1_FIXTURE_REQUESTS, type Sp1QuoteFixture } from "./sp1-fixtures.js";
