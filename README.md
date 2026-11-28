@@ -144,6 +144,16 @@ node packages/terminal/dist/cli.js sell 0x9118BD806cB3906Dc6d50a4409a9e9dF481723
 - `--network 4663` switches to mainnet.
 - `--slippage-bps` must be between 1 and 2000.
 
+**Testnet showcase (read-only, for demos):** `showcase-testnet` re-checks everything live on 46630 and prints
+explorer links: API `/health` + `/v1/config`, an allow and a deny Q-001 verdict from the guard engine, PermRouter and
+V4 adapter owned by PermTimelock (delay 600 s), the timelock roles, the Ops Safe, and the deploy/handoff txs. No key,
+no signing; it exits 1 if anything no longer matches the evidence.
+
+```bash
+node packages/terminal/dist/cli.js showcase-testnet --pace 120    # slower output for screen recordings
+node packages/terminal/dist/cli.js showcase-testnet --live        # + 2 paid /v1/verify calls with ZGUARD_API_KEY
+```
+
 ## $ZGUARD token: launch and buyback-and-burn (prepared, not launched)
 
 The product token follows the brief: it launches on pons, and net hosted-API revenue buys it back and burns it to
